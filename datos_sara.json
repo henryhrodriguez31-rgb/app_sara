@@ -1,0 +1,93 @@
+{
+    "grupos": [
+        "Entretenimiento",
+        "Alimentación",
+        "Servicios",
+        "Transporte",
+        "Salud",
+        "Gastos Familiares",
+        "Gastos Vehículo",
+        "Ahorros"
+    ],
+    "cuentas": {
+        "Banesco Diversión": {
+            "saldo": 9.0,
+            "moneda": "VES"
+        },
+        "Provincial Ahorro": {
+            "saldo": 0.0,
+            "moneda": "VES"
+        },
+        "BDV Gastos": {
+            "saldo": 20863.65,
+            "moneda": "VES"
+        }
+    },
+    "transacciones": [],
+    "estimados": [
+        {
+            "Grupo": "Escuela",
+            "Monto_Estimado_USD": 80.0
+        },
+        {
+            "Grupo": "Piscina",
+            "Monto_Estimado_USD": 35.0
+        },
+        {
+            "Grupo": "Certificado",
+            "Monto_Estimado_USD": 28.0
+        },
+        {
+            "Grupo": "Pasaje Mamita",
+            "Monto_Estimado_USD": 10.0
+        },
+        {
+            "Grupo": "Gasolina",
+            "Monto_Estimado_USD": 30.0
+        },
+        {
+            "Grupo": "Curso Sopi",
+            "Monto_Estimado_USD": 25.0
+        },
+        {
+            "Grupo": "Telefonos",
+            "Monto_Estimado_USD": 23.0
+        },
+        {
+            "Grupo": "Servicios",
+            "Monto_Estimado_USD": 15.0
+        },
+        {
+            "Grupo": "Julio",
+            "Monto_Estimado_USD": 120.0
+        },
+        {
+            "Grupo": "Comidas",
+            "Monto_Estimado_USD": 265.0
+        },
+        {
+            "Grupo": "Ahorro",
+            "Monto_Estimado_USD": 96.0
+        },
+        {
+            "Grupo": "Cashead",
+            "Monto_Estimado_USD": 134.06
+        },
+        {
+            "Grupo": "krece",
+            "Monto_Estimado_USD": 42.0
+        },
+        {
+            "Grupo": "Distracion",
+            "Monto_Estimado_USD": 80.0
+        },
+        {
+            "Grupo": "cuota TC",
+            "Monto_Estimado_USD": 10.0
+        },
+        {
+            "Grupo": null,
+            "Monto_Estimado_USD": 0.0
+        }
+    ]
+}
