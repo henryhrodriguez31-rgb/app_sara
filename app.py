@@ -40,35 +40,62 @@ def cargar_datos():
 
 df_movimientos, df_estimaciones, df_inversiones, lista_grupos, lista_cuentas = cargar_datos()
 
-# Función para obtener tasas en tiempo real mediante API
+# Función para obtener tasas con respaldos alternativos
 @st.cache_data(ttl=300)
 def obtener_tasas():
     tasa_bcv = 36.5
     tasa_paralelo = 36.5
     
-    # Consulta Tasa BCV y Paralelo desde API
+    # Fuente 1: pyDolarVenezuela
     try:
-        res_bcv = requests.get("https://dolarapi.com/v1/dolares/oficial", timeout=5)
-        if res_bcv.status_code == 200:
-            tasa_bcv = float(res_bcv.json()["promedio"])
+        res = requests.get("https://pydolarvenezuela-api.vercel.app/api/v1/dollar", timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if "monedas" in data and "dollar" in data["monedas"]:
+                tasa_bcv = float(data["monedas"]["dollar"]["price"])
+            elif "bcv" in data:
+                tasa_bcv = float(data["bcv"]["price"])
+            
+            if "enparalelovzla" in data:
+                tasa_paralelo = float(data["enparalelovzla"]["price"])
+            return tasa_bcv, tasa_paralelo
     except Exception:
         pass
 
+    # Fuente 2: DolarApi
     try:
-        res_par = requests.get("https://dolarapi.com/v1/dolares/paralelo", timeout=5)
+        res_bcv = requests.get("https://ve.dolarapi.com/v1/dolares/oficial", timeout=5)
+        if res_bcv.status_code == 200:
+            tasa_bcv = float(res_bcv.json()["promedio"])
+        
+        res_par = requests.get("https://ve.dolarapi.com/v1/dolares/paralelo", timeout=5)
         if res_par.status_code == 200:
             tasa_paralelo = float(res_par.json()["promedio"])
+            
+        return tasa_bcv, tasa_paralelo
     except Exception:
-        tasa_paralelo = tasa_bcv
+        pass
+
+    # Fuente 3: CriptoYa
+    try:
+        res = requests.get("https://criptoya.com/api/ves/usdt", timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if "ask" in data:
+                tasa_paralelo = float(data["ask"])
+                if tasa_bcv == 36.5:
+                    tasa_bcv = tasa_paralelo
+    except Exception:
+        pass
 
     return tasa_bcv, tasa_paralelo
 
+# ASIGNACIÓN GLOBAL DE VARIABLES
 tasa_bcv, tasa_paralelo = obtener_tasas()
 
 # BARRA LATERAL (MENU IZQUIERDO)
 st.sidebar.title("📌 App Sara Menu")
 
-# Selector dinámico de tasa
 tipo_tasa = st.sidebar.radio("Tasa activa para cálculo:", ["BCV Oficial", "Paralelo", "Manual"])
 
 if tipo_tasa == "BCV Oficial":
@@ -97,7 +124,7 @@ opcion_menu = st.sidebar.radio(
         "🎯 Presupuesto vs Real",
         "📥 Cargar Presupuesto (Excel/CSV)",
         "📊 Resumen y Gráficos",
-        "⚙️ Gestión de Grupos y Cuentas"
+        "⚙️️ Gestión de Grupos y Cuentas"
     ]
 )
 
