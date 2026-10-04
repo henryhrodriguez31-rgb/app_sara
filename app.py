@@ -15,21 +15,27 @@ def inicializar_estado():
             df_mov = conn.read(worksheet="Movimientos", ttl=0)
             st.session_state.df_movimientos = df_mov.dropna(how="all")
         except Exception:
-            st.session_state.df_movimientos = pd.DataFrame(columns=["Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_USD", "Monto_VES", "Detalle"])
+            st.session_state.df_movimientos = pd.DataFrame(
+                columns=["Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"]
+            )
 
     if "df_estimaciones" not in st.session_state:
         try:
             df_est = conn.read(worksheet="Estimaciones", ttl=0)
             st.session_state.df_estimaciones = df_est.dropna(how="all")
         except Exception:
-            st.session_state.df_estimaciones = pd.DataFrame(columns=["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
+            st.session_state.df_estimaciones = pd.DataFrame(
+                columns=["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]
+            )
 
     if "df_inversiones" not in st.session_state:
         try:
             df_inv = conn.read(worksheet="Inversiones", ttl=0)
             st.session_state.df_inversiones = df_inv.dropna(how="all")
         except Exception:
-            st.session_state.df_inversiones = pd.DataFrame(columns=["Fecha", "Plataforma", "Activo", "Tipo_Operacion", "Monto_Invertido_USD", "Valor_Actual_USD", "Detalle"])
+            st.session_state.df_inversiones = pd.DataFrame(
+                columns=["Fecha", "Plataforma", "Activo", "Tipo_Operacion", "Monto_Invertido_USD", "Valor_Actual_USD", "Detalle"]
+            )
 
     if "lista_grupos" not in st.session_state:
         try:
@@ -53,12 +59,12 @@ def inicializar_estado():
 
 inicializar_estado()
 
-# Guardado con relleno uniforme
-def guardar_en_sheets(worksheet_name, df_data, target_rows=100):
+# Guardado en Google Sheets asegurando guardar todas las filas
+def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
     try:
         df_padded = df_data.copy()
-        if len(df_padded) < target_rows:
-            rows_to_add = target_rows - len(df_padded)
+        if len(df_padded) < min_rows:
+            rows_to_add = min_rows - len(df_padded)
             empty_rows = pd.DataFrame({col: [""] * rows_to_add for col in df_padded.columns})
             df_padded = pd.concat([df_padded, empty_rows], ignore_index=True)
             
@@ -94,7 +100,7 @@ tasa_bcv, tasa_paralelo = obtener_tasas()
 # BARRA LATERAL (MENU IZQUIERDO)
 st.sidebar.title("📌 App Sara Menu")
 
-tipo_tasa = st.sidebar.radio("Tasa activa para cálculo:", ["BCV Oficial", "Paralelo", "Manual"])
+tipo_tasa = st.sidebar.radio("Tasa activa para nuevos registros:", ["BCV Oficial", "Paralelo", "Manual"])
 
 if tipo_tasa == "BCV Oficial":
     tasa_activa = tasa_bcv
@@ -105,7 +111,7 @@ else:
 
 st.sidebar.caption(f"💵 Tasa BCV: **{tasa_bcv:.2f} VES**")
 st.sidebar.caption(f"📈 Tasa Paralela: **{tasa_paralelo:.2f} VES**")
-st.sidebar.caption(f"⚡ Tasa Activa: **{tasa_activa:.2f} VES**")
+st.sidebar.caption(f"⚡ Tasa Activa Seleccionada: **{tasa_activa:.2f} VES**")
 
 if st.sidebar.button("🔄 Actualizar Tasas"):
     st.cache_data.clear()
@@ -146,30 +152,40 @@ if opcion_menu == OPC_SALDOS:
     with col_t2:
         st.metric("📈 Tasa Paralela", f"{tasa_paralelo:.2f} VES/USD")
     with col_t3:
-        st.metric("⚡ Tasa Activa Aplicada", f"{tasa_activa:.2f} VES/USD")
+        st.metric("⚡ Tasa Activa Actual", f"{tasa_activa:.2f} VES/USD")
     st.divider()
 
     df_mov = st.session_state.df_movimientos
     if not df_mov.empty and "Cuenta" in df_mov.columns:
         saldos = []
         for cta in st.session_state.lista_cuentas:
-            ing = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_USD"].sum()
-            gast = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_USD"].sum()
-            saldo_usd = ing - gast
-            saldo_ves = saldo_usd * tasa_activa
-            saldos.append({"Cuenta": cta, "Saldo ($ USD)": saldo_usd, "Saldo (VES)": saldo_ves})
+            ing_ves = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_VES"].sum()
+            gast_ves = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_VES"].sum()
+            
+            ing_usd = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_USD"].sum()
+            gast_usd = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_USD"].sum()
+
+            saldo_ves = ing_ves - gast_ves
+            saldo_usd = ing_usd - gast_usd
+
+            saldos.append({
+                "Cuenta": cta, 
+                "Saldo (VES)": saldo_ves, 
+                "Saldo Registrado ($ USD)": saldo_usd
+            })
         
         df_saldos = pd.DataFrame(saldos)
         st.dataframe(df_saldos, use_container_width=True)
         
-        total_usd = df_saldos["Saldo ($ USD)"].sum()
-        st.subheader(f"💰 Saldo Total Consolidado: **${total_usd:,.2f} USD** / **{total_usd * tasa_activa:,.2f} VES**")
+        total_ves = df_saldos["Saldo (VES)"].sum()
+        total_usd = df_saldos["Saldo Registrado ($ USD)"].sum()
+        st.subheader(f"💰 Saldo Total Consolidado: **{total_ves:,.2f} VES** / **${total_usd:,.2f} USD**")
     else:
         st.info("Registra tu primer movimiento asociando una cuenta para calcular los saldos automáticos.")
 
 # 2. REGISTRAR MOVIMIENTO
 elif opcion_menu == OPC_REGISTRAR:
-    st.subheader("Nuevo Registro Diario")
+    st.subheader("Nuevo Registro Diario en Bolívares (VES)")
     col1, col2 = st.columns(2)
     with col1:
         fecha = st.date_input("Fecha")
@@ -178,9 +194,11 @@ elif opcion_menu == OPC_REGISTRAR:
         cuenta = st.selectbox("Cuenta / Banco", st.session_state.lista_cuentas)
     with col2:
         grupo = st.selectbox("Grupo", st.session_state.lista_grupos)
-        monto_usd = st.number_input("Monto ($ USD)", min_value=0.0, step=1.0)
-        monto_ves = monto_usd * tasa_activa
-        st.info(f"Equivalente a Tasa Activa ({tasa_activa:.2f}): **{monto_ves:,.2f} VES**")
+        monto_ves = st.number_input("Monto en Bolívares (VES)", min_value=0.0, step=10.0)
+        
+        monto_usd = monto_ves / tasa_activa if tasa_activa > 0 else 0.0
+        
+        st.success(f"Equivalente a Dólares con Tasa del Día ({tasa_activa:.2f} VES): **${monto_usd:,.2f} USD**")
         detalle = st.text_input("Detalle / Observación")
 
     if st.button("Guardar Movimiento", type="primary"):
@@ -190,13 +208,15 @@ elif opcion_menu == OPC_REGISTRAR:
             "Categoria": categoria,
             "Grupo": grupo,
             "Cuenta": cuenta,
-            "Monto_USD": monto_usd,
             "Monto_VES": monto_ves,
+            "Tasa_Usada": tasa_activa,
+            "Monto_USD": round(monto_usd, 2),
             "Detalle": detalle
         }])
+        
         st.session_state.df_movimientos = pd.concat([st.session_state.df_movimientos, nuevo], ignore_index=True)
         guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
-        st.success("¡Movimiento registrado correctamente!")
+        st.success(f"¡Movimiento registrado con éxito! Guardado en USD: ${monto_usd:,.2f} USD a una tasa de {tasa_activa:.2f} VES.")
         st.rerun()
 
     st.divider()
@@ -256,7 +276,7 @@ elif opcion_menu == OPC_INVERSIONES:
 
 # 4. PRESUPUESTO VS REAL
 elif opcion_menu == OPC_PRESUPUESTO:
-    st.subheader("Comparativo de Desempeño Financiero")
+    st.subheader("Comparativo de Desempeño Financiero (en $ USD)")
     
     df_est = st.session_state.df_estimaciones
     df_mov = st.session_state.df_movimientos
@@ -267,14 +287,14 @@ elif opcion_menu == OPC_PRESUPUESTO:
         ing_est = df_est[df_est["Tipo"] == "Ingreso"]["Monto_Estimado_USD"].sum() if not df_est.empty else 0.0
         ing_real = df_mov[df_mov["Tipo"] == "Ingreso"]["Monto_USD"].sum() if not df_mov.empty else 0.0
         st.metric("Ingresos Estimados", f"${ing_est:,.2f}")
-        st.metric("Ingresos Reales", f"${ing_real:,.2f}", delta=f"${ing_real - ing_est:,.2f}")
+        st.metric("Ingresos Reales (A Tasa Histórica)", f"${ing_real:,.2f}", delta=f"${ing_real - ing_est:,.2f}")
 
     with col_b:
         st.markdown("### 📤 Gastos")
         gast_est = df_est[df_est["Tipo"] == "Gasto"]["Monto_Estimado_USD"].sum() if not df_est.empty else 0.0
         gast_real = df_mov[df_mov["Tipo"] == "Gasto"]["Monto_USD"].sum() if not df_mov.empty else 0.0
         st.metric("Gastos Estimados", f"${gast_est:,.2f}")
-        st.metric("Gastos Reales", f"${gast_real:,.2f}", delta=f"${gast_est - gast_real:,.2f}")
+        st.metric("Gastos Reales (A Tasa Histórica)", f"${gast_real:,.2f}", delta=f"${gast_est - gast_real:,.2f}")
 
 # 5. CARGAR PRESUPUESTO
 elif opcion_menu == OPC_CARGAR:
@@ -289,21 +309,24 @@ elif opcion_menu == OPC_CARGAR:
                 df_cargado = pd.read_csv(archivo)
             else:
                 df_cargado = pd.read_excel(archivo)
-                
-            st.write("Vista previa del archivo cargado:")
-            st.dataframe(df_cargado.head())
             
-            if st.button("Guardar Presupuesto en Google Sheets", type="primary"):
+            # Limpiar filas completamente vacías pero conservar toda la información
+            df_cargado = df_cargado.dropna(how="all")
+            
+            st.write(f"📋 **Vista previa de todas las filas cargadas ({len(df_cargado)} filas encontradas):**")
+            st.dataframe(df_cargado, use_container_width=True)
+            
+            if st.button("Guardar Presupuesto Completo en Google Sheets", type="primary"):
                 st.session_state.df_estimaciones = df_cargado
-                guardar_en_sheets("Estimaciones", df_cargado)
-                st.success("¡Presupuesto importado y guardado exitosamente!")
+                guardar_en_sheets("Estimaciones", df_cargado, min_rows=max(100, len(df_cargado)))
+                st.success(f"¡Se han importado y guardado las {len(df_cargado)} filas de tu presupuesto exitosamente!")
                 st.rerun()
         except Exception as e:
             st.error(f"Error al leer el archivo: {e}")
 
 # 6. RESUMEN Y GRÁFICOS
 elif opcion_menu == OPC_RESUMEN:
-    st.subheader("Evolución y Distribución de Gastos")
+    st.subheader("Evolución y Distribución de Gastos (en USD)")
     df_mov = st.session_state.df_movimientos
     if not df_mov.empty:
         df_gastos = df_mov[df_mov["Tipo"] == "Gasto"]
