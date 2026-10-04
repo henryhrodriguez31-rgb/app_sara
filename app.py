@@ -17,6 +17,37 @@ TASAS_HISTORICAS_OCT_2026 = {
     "2026-10-04": 871.37,
 }
 
+# Estandarizador de DataFrame de Estimaciones
+def estandarizar_df_estimaciones(df):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
+    
+    df_clean = df.dropna(how="all").copy()
+    
+    column_mapping = {}
+    for col in df_clean.columns:
+        clow = str(col).strip().lower()
+        if clow == "id":
+            column_mapping[col] = "ID"
+        elif "tipo" in clow:
+            column_mapping[col] = "Tipo"
+        elif "cat" in clow:
+            column_mapping[col] = "Categoria"
+        elif "grup" in clow:
+            column_mapping[col] = "Grupo"
+        elif "monto" in clow or "estimado" in clow or "usd" in clow:
+            column_mapping[col] = "Monto_Estimado_USD"
+            
+    df_clean = df_clean.rename(columns=column_mapping)
+    
+    for required_col in ["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]:
+        if required_col not in df_clean.columns:
+            df_clean[required_col] = ""
+            
+    df_clean["ID"] = range(1, len(df_clean) + 1)
+    
+    return df_clean[["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]]
+
 # Cargar datos e inicializar en st.session_state
 def inicializar_estado():
     if "df_movimientos" not in st.session_state:
@@ -34,10 +65,7 @@ def inicializar_estado():
     if "df_estimaciones" not in st.session_state:
         try:
             df_est = conn.read(worksheet="Estimaciones", ttl=0)
-            df_est = df_est.dropna(how="all")
-            if not df_est.empty and "ID" not in df_est.columns:
-                df_est.insert(0, "ID", range(1, len(df_est) + 1))
-            st.session_state.df_estimaciones = df_est
+            st.session_state.df_estimaciones = estandarizar_df_estimaciones(df_est)
         except Exception:
             st.session_state.df_estimaciones = pd.DataFrame(
                 columns=["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]
@@ -88,39 +116,13 @@ def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
     except Exception as e:
         st.error(f"Error guardando en Google Sheets: {e}")
 
-# Cálculo ultra-robusto para sumar Ingresos y Gastos Estimados
+# Cálculo seguro para sumar Ingresos y Gastos Estimados
 def calcular_total_estimado(df_est, tipo_buscado):
-    if df_est is None or df_est.empty:
-        return 0.0
-    
-    df = df_est.copy()
-    df.columns = [str(c).strip() for c in df.columns]
-    
-    col_tipo = None
-    for c in df.columns:
-        if "tipo" in c.lower():
-            col_tipo = c
-            break
-            
-    col_monto = None
-    for c in df.columns:
-        clow = c.lower()
-        if "monto" in clow or "estimado" in clow or "usd" in clow:
-            col_monto = c
-            break
-
-    if not col_tipo and len(df.columns) >= 1:
-        col_tipo = df.columns[0]
-    if not col_monto and len(df.columns) >= 4:
-        col_monto = df.columns[3]
-    elif not col_monto and len(df.columns) >= 2:
-        col_monto = df.columns[-1]
-
-    if not col_tipo or not col_monto:
+    if df_est is None or df_est.empty or "Tipo" not in df_est.columns or "Monto_Estimado_USD" not in df_est.columns:
         return 0.0
 
-    mask = df[col_tipo].astype(str).str.strip().str.lower() == tipo_buscado.lower()
-    df_filtrado = df[mask]
+    mask = df_est["Tipo"].astype(str).str.strip().str.lower() == tipo_buscado.lower()
+    df_filtrado = df_est[mask]
 
     if df_filtrado.empty:
         return 0.0
@@ -135,7 +137,7 @@ def calcular_total_estimado(df_est, tipo_buscado):
             s = s.replace(",", ".")
         return pd.to_numeric(s, errors="coerce") or 0.0
 
-    return df_filtrado[col_monto].apply(limpiar_num).sum()
+    return df_filtrado["Monto_Estimado_USD"].apply(limpiar_num).sum()
 
 # Obtener tasas del día desde API
 @st.cache_data(ttl=300)
@@ -260,7 +262,7 @@ if opcion_menu == OPC_SALDOS:
 
 # 2. REGISTRAR / EDITAR / ELIMINAR MOVIMIENTOS
 elif opcion_menu == OPC_REGISTRAR:
-    tab1, tab2 = st.tabs(["➕ Nuevo Registro", "✏️ Modificar o Eliminar Registro"])
+    tab1, tab2 = st.tabs(["➕ Nuevo Registro", "✏️️ Modificar o Eliminar Registro"])
     
     with tab1:
         st.subheader("Nuevo Registro Diario en Bolívares (VES)")
@@ -361,7 +363,7 @@ elif opcion_menu == OPC_REGISTRAR:
                         st.rerun()
 
                 with col_btn2:
-                    if st.button("🗑️️ Eliminar Movimiento", type="secondary"):
+                    if st.button("🗑️ Eliminar Movimiento", type="secondary"):
                         st.session_state.df_movimientos = st.session_state.df_movimientos.drop(idx).reset_index(drop=True)
                         guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
                         st.success("¡Registro eliminado correctamente!")
@@ -468,9 +470,7 @@ elif opcion_menu == OPC_PRESUPUESTO:
             est_monto = st.number_input("Monto Estimado ($ USD)", min_value=0.0, step=10.0, key="add_est_monto")
 
         if st.button("Guardar Estimación Presupuestaria", type="primary"):
-            next_est_id = 1
-            if not st.session_state.df_estimaciones.empty and "ID" in st.session_state.df_estimaciones.columns:
-                next_est_id = int(pd.to_numeric(st.session_state.df_estimaciones["ID"], errors="coerce").max() or 0) + 1
+            next_est_id = len(st.session_state.df_estimaciones) + 1
 
             nueva_est = pd.DataFrame([{
                 "ID": next_est_id,
@@ -481,6 +481,7 @@ elif opcion_menu == OPC_PRESUPUESTO:
             }])
             
             st.session_state.df_estimaciones = pd.concat([st.session_state.df_estimaciones, nueva_est], ignore_index=True)
+            st.session_state.df_estimaciones = estandarizar_df_estimaciones(st.session_state.df_estimaciones)
             guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones)
             st.success(f"¡Estimación de {est_tipo} por ${est_monto:,.2f} USD agregada exitosamente!")
             st.rerun()
@@ -491,16 +492,16 @@ elif opcion_menu == OPC_PRESUPUESTO:
         if not df_est.empty:
             st.dataframe(df_est, use_container_width=True)
             
-            if "ID" in df_est.columns:
-                opciones_est = df_est["ID"].astype(str) + " - " + df_est["Tipo"].astype(str) + " - " + df_est["Categoria"].astype(str)
-                est_sel = st.selectbox("Selecciona una estimación para borrar:", opciones_est)
-                
-                if st.button("🗑️ Eliminar Estimación Seleccionada"):
-                    id_est_del = int(est_sel.split(" - ")[0])
-                    st.session_state.df_estimaciones = df_est[df_est["ID"] != id_est_del].reset_index(drop=True)
-                    guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones)
-                    st.success("¡Estimación eliminada con éxito!")
-                    st.rerun()
+            opciones_est = df_est["ID"].astype(str) + " - " + df_est["Tipo"].astype(str) + " - " + df_est["Categoria"].astype(str)
+            est_sel = st.selectbox("Selecciona una estimación para borrar:", opciones_est)
+            
+            if st.button("🗑️ Eliminar Estimación Seleccionada"):
+                id_est_del = int(est_sel.split(" - ")[0])
+                st.session_state.df_estimaciones = df_est[df_est["ID"] != id_est_del].reset_index(drop=True)
+                st.session_state.df_estimaciones = estandarizar_df_estimaciones(st.session_state.df_estimaciones)
+                guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones)
+                st.success("¡Estimación eliminada con éxito!")
+                st.rerun()
         else:
             st.info("No hay presupuestos estimados registrados aún.")
 
@@ -518,9 +519,7 @@ elif opcion_menu == OPC_CARGAR:
             else:
                 df_cargado = pd.read_excel(archivo)
             
-            df_cargado = df_cargado.dropna(how="all")
-            if "ID" not in df_cargado.columns:
-                df_cargado.insert(0, "ID", range(1, len(df_cargado) + 1))
+            df_cargado = estandarizar_df_estimaciones(df_cargado)
             
             st.write(f"📋 **Vista previa de todas las filas cargadas ({len(df_cargado)} filas encontradas):**")
             st.dataframe(df_cargado, use_container_width=True)
