@@ -40,11 +40,18 @@ def cargar_datos():
 
 df_movimientos, df_estimaciones, df_inversiones, lista_grupos, lista_cuentas = cargar_datos()
 
-# Función para obtener tasas con respaldos alternativos
+# Función auxiliar para guardar DataFrames en Google Sheets sin UnsupportedOperationError
+def guardar_en_sheets(worksheet_name, df_data):
+    try:
+        conn.update(worksheet=worksheet_name, data=df_data)
+    except Exception:
+        conn.create(worksheet=worksheet_name, data=df_data)
+
+# Obtener tasas dinámicas con servidores de respaldo
 @st.cache_data(ttl=300)
 def obtener_tasas():
-    tasa_bcv = 36.5
-    tasa_paralelo = 36.5
+    tasa_bcv = 866.56
+    tasa_paralelo = 974.38
     
     # Fuente 1: pyDolarVenezuela
     try:
@@ -76,18 +83,6 @@ def obtener_tasas():
     except Exception:
         pass
 
-    # Fuente 3: CriptoYa
-    try:
-        res = requests.get("https://criptoya.com/api/ves/usdt", timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            if "ask" in data:
-                tasa_paralelo = float(data["ask"])
-                if tasa_bcv == 36.5:
-                    tasa_bcv = tasa_paralelo
-    except Exception:
-        pass
-
     return tasa_bcv, tasa_paralelo
 
 tasa_bcv, tasa_paralelo = obtener_tasas()
@@ -114,7 +109,6 @@ if st.sidebar.button("🔄 Actualizar Tasas"):
 
 st.sidebar.divider()
 
-# OPCIONES DE MENÚ EN VARIABLES
 OPC_SALDOS = "🏛️ Saldos & Cuentas"
 OPC_REGISTRAR = "📝 Registrar Movimiento"
 OPC_INVERSIONES = "📈 Portafolio de Inversiones"
@@ -196,7 +190,7 @@ elif opcion_menu == OPC_REGISTRAR:
             "Detalle": detalle
         }])
         df_actualizado = pd.concat([df_movimientos, nuevo], ignore_index=True)
-        conn.update(worksheet="Movimientos", data=df_actualizado)
+        guardar_en_sheets("Movimientos", df_actualizado)
         st.success("¡Movimiento registrado correctamente!")
         st.rerun()
 
@@ -231,7 +225,7 @@ elif opcion_menu == OPC_INVERSIONES:
                 "Detalle": det_inv
             }])
             df_inv_actualizado = pd.concat([df_inversiones, nueva_inv], ignore_index=True)
-            conn.update(worksheet="Inversiones", data=df_inv_actualizado)
+            guardar_en_sheets("Inversiones", df_inv_actualizado)
             st.success("¡Posición de inversión registrada!")
             st.rerun()
 
@@ -291,7 +285,7 @@ elif opcion_menu == OPC_CARGAR:
             st.dataframe(df_cargado.head())
             
             if st.button("Guardar Presupuesto en Google Sheets", type="primary"):
-                conn.update(worksheet="Estimaciones", data=df_cargado)
+                guardar_en_sheets("Estimaciones", df_cargado)
                 st.success("¡Presupuesto importado y guardado exitosamente!")
                 st.rerun()
         except Exception as e:
@@ -322,7 +316,7 @@ elif opcion_menu == OPC_CONFIGURACION:
         if st.button("➕ Agregar Grupo", key="btn_add_grupo"):
             if nuevo_grupo and nuevo_grupo not in lista_grupos:
                 lista_grupos.append(nuevo_grupo)
-                conn.update(worksheet="Grupos", data=pd.DataFrame({"Nombre_Grupo": lista_grupos}))
+                guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": lista_grupos}))
                 st.success(f"Grupo '{nuevo_grupo}' agregado con éxito.")
                 st.rerun()
 
@@ -331,7 +325,7 @@ elif opcion_menu == OPC_CONFIGURACION:
         if st.button("🗑️ Eliminar Grupo", key="btn_del_grupo"):
             if grupo_eliminar in lista_grupos:
                 lista_grupos.remove(grupo_eliminar)
-                conn.update(worksheet="Grupos", data=pd.DataFrame({"Nombre_Grupo": lista_grupos}))
+                guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": lista_grupos}))
                 st.success(f"Grupo '{grupo_eliminar}' eliminado.")
                 st.rerun()
 
@@ -341,7 +335,7 @@ elif opcion_menu == OPC_CONFIGURACION:
         if st.button("➕ Agregar Cuenta", key="btn_add_cuenta"):
             if nueva_cuenta and nueva_cuenta not in lista_cuentas:
                 lista_cuentas.append(nueva_cuenta)
-                conn.update(worksheet="Cuentas", data=pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
+                guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
                 st.success(f"Cuenta '{nueva_cuenta}' agregada con éxito.")
                 st.rerun()
 
@@ -350,6 +344,6 @@ elif opcion_menu == OPC_CONFIGURACION:
         if st.button("🗑️ Eliminar Cuenta", key="btn_del_cuenta"):
             if cuenta_eliminar in lista_cuentas:
                 lista_cuentas.remove(cuenta_eliminar)
-                conn.update(worksheet="Cuentas", data=pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
+                guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
                 st.success(f"Cuenta '{cuenta_eliminar}' eliminada.")
                 st.rerun()
