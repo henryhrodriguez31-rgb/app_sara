@@ -11,28 +11,37 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def cargar_datos():
     try:
         df_mov = conn.read(worksheet="Movimientos", ttl=0)
+        df_mov = df_mov.dropna(how="all")
     except Exception:
         df_mov = pd.DataFrame(columns=["Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_USD", "Monto_VES", "Detalle"])
 
     try:
         df_est = conn.read(worksheet="Estimaciones", ttl=0)
+        df_est = df_est.dropna(how="all")
     except Exception:
         df_est = pd.DataFrame(columns=["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
 
     try:
         df_inv = conn.read(worksheet="Inversiones", ttl=0)
+        df_inv = df_inv.dropna(how="all")
     except Exception:
         df_inv = pd.DataFrame(columns=["Fecha", "Plataforma", "Activo", "Tipo_Operacion", "Monto_Invertido_USD", "Valor_Actual_USD", "Detalle"])
 
     try:
         df_grup = conn.read(worksheet="Grupos", ttl=0)
-        grupos = df_grup["Nombre_Grupo"].dropna().tolist()
+        grupos = df_grup["Nombre_Grupo"].dropna().astype(str).str.strip().tolist()
+        grupos = [g for g in grupos if g != ""]
+        if not grupos:
+            grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
     except Exception:
         grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
 
     try:
         df_cta = conn.read(worksheet="Cuentas", ttl=0)
-        cuentas = df_cta["Nombre_Cuenta"].dropna().tolist()
+        cuentas = df_cta["Nombre_Cuenta"].dropna().astype(str).str.strip().tolist()
+        cuentas = [c for c in cuentas if c != ""]
+        if not cuentas:
+            cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
     except Exception:
         cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
 
@@ -40,24 +49,19 @@ def cargar_datos():
 
 df_movimientos, df_estimaciones, df_inversiones, lista_grupos, lista_cuentas = cargar_datos()
 
-# Función para guardar en Google Sheets limpiando primero la pestaña
-def guardar_en_sheets(worksheet_name, df_data):
+# Función de guardado seguro con Relleno Fijo de Filas (Padding)
+def guardar_en_sheets(worksheet_name, df_data, target_rows=100):
     try:
-        # Intentar limpiar el área de trabajo antes de escribir
-        client = conn._instance
-        try:
-            ws = client.spreadsheet.worksheet(worksheet_name)
-            ws.clear()
-        except Exception:
-            pass
-        conn.update(worksheet=worksheet_name, data=df_data)
-    except Exception:
-        # Si la pestaña no existía, la crea directamente
-        try:
-            conn.create(worksheet=worksheet_name, data=df_data)
-        except Exception:
-            # Fallback seguro
-            conn.update(worksheet=worksheet_name, data=df_data)
+        # Asegurarse de mantener una longitud constante para evitar UnsupportedOperationError
+        df_padded = df_data.copy()
+        if len(df_padded) < target_rows:
+            rows_to_add = target_rows - len(df_padded)
+            empty_rows = pd.DataFrame({col: [""] * rows_to_add for col in df_padded.columns})
+            df_padded = pd.concat([df_padded, empty_rows], ignore_index=True)
+            
+        conn.update(worksheet=worksheet_name, data=df_padded)
+    except Exception as e:
+        st.error(f"Error al guardar en Google Sheets: {e}")
 
 # Obtener tasas dinámicas con servidores de respaldo
 @st.cache_data(ttl=300)
@@ -333,13 +337,14 @@ elif opcion_menu == OPC_CONFIGURACION:
                 st.rerun()
 
         st.divider()
-        grupo_eliminar = st.selectbox("Seleccionar grupo a eliminar", lista_grupos, key="sel_del_grupo")
-        if st.button("🗑️ Eliminar Grupo", key="btn_del_grupo"):
-            if grupo_eliminar in lista_grupos:
-                lista_grupos.remove(grupo_eliminar)
-                guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": lista_grupos}))
-                st.success(f"Grupo '{grupo_eliminar}' eliminado.")
-                st.rerun()
+        if lista_grupos:
+            grupo_eliminar = st.selectbox("Seleccionar grupo a eliminar", lista_grupos, key="sel_del_grupo")
+            if st.button("🗑️ Eliminar Grupo", key="btn_del_grupo"):
+                if grupo_eliminar in lista_grupos:
+                    lista_grupos.remove(grupo_eliminar)
+                    guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": lista_grupos}))
+                    st.success(f"Grupo '{grupo_eliminar}' eliminado.")
+                    st.rerun()
 
     with col_g2:
         st.markdown("### 🏦 Gestión de Cuentas / Bancos")
@@ -352,10 +357,11 @@ elif opcion_menu == OPC_CONFIGURACION:
                 st.rerun()
 
         st.divider()
-        cuenta_eliminar = st.selectbox("Seleccionar cuenta a eliminar", lista_cuentas, key="sel_del_cuenta")
-        if st.button("🗑️ Eliminar Cuenta", key="btn_del_cuenta"):
-            if cuenta_eliminar in lista_cuentas:
-                lista_cuentas.remove(cuenta_eliminar)
-                guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
-                st.success(f"Cuenta '{cuenta_eliminar}' eliminada.")
-                st.rerun()
+        if lista_cuentas:
+            cuenta_eliminar = st.selectbox("Seleccionar cuenta a eliminar", lista_cuentas, key="sel_del_cuenta")
+            if st.button("🗑️ Eliminar Cuenta", key="btn_del_cuenta"):
+                if cuenta_eliminar in lista_cuentas:
+                    lista_cuentas.remove(cuenta_eliminar)
+                    guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
+                    st.success(f"Cuenta '{cuenta_eliminar}' eliminada.")
+                    st.rerun()
