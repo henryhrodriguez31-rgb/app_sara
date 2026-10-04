@@ -34,10 +34,13 @@ def inicializar_estado():
     if "df_estimaciones" not in st.session_state:
         try:
             df_est = conn.read(worksheet="Estimaciones", ttl=0)
-            st.session_state.df_estimaciones = df_est.dropna(how="all")
+            df_est = df_est.dropna(how="all")
+            if not df_est.empty and "ID" not in df_est.columns:
+                df_est.insert(0, "ID", range(1, len(df_est) + 1))
+            st.session_state.df_estimaciones = df_est
         except Exception:
             st.session_state.df_estimaciones = pd.DataFrame(
-                columns=["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]
+                columns=["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]
             )
 
     if "df_inversiones" not in st.session_state:
@@ -84,6 +87,38 @@ def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Error guardando en Google Sheets: {e}")
+
+# Función para calcular la suma limpia de las estimaciones
+def calcular_total_estimado(df_est, tipo_filtro):
+    if df_est.empty:
+        return 0.0
+    
+    col_tipo = [c for c in df_est.columns if "tipo" in c.lower()]
+    col_monto = [c for c in df_est.columns if "monto" in c.lower() or "estimado" in c.lower() or "usd" in c.lower()]
+    
+    if not col_tipo or not col_monto:
+        return 0.0
+        
+    c_tipo = col_tipo[0]
+    c_monto = col_monto[0]
+    
+    # Filtrar ignorando espacios y diferencias de mayúsculas/minúsculas
+    mask = df_est[c_tipo].astype(str).str.strip().str.lower() == tipo_filtro.lower()
+    df_filtrado = df_est[mask]
+    
+    if df_filtrado.empty:
+        return 0.0
+        
+    # Limpieza estricta de números
+    s_monto = (
+        df_filtrado[c_monto]
+        .astype(str)
+        .str.replace("$", "", regex=False)
+        .str.replace(",", "", regex=False)
+        .str.strip()
+    )
+    
+    return pd.to_numeric(s_monto, errors="coerce").sum()
 
 # Obtener tasas del día desde API
 @st.cache_data(ttl=300)
@@ -182,11 +217,11 @@ if opcion_menu == OPC_SALDOS:
     if not df_mov.empty and "Cuenta" in df_mov.columns:
         saldos = []
         for cta in st.session_state.lista_cuentas:
-            ing_ves = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_VES"].sum()
-            gast_ves = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_VES"].sum()
+            ing_ves = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_VES"], errors="coerce").sum()
+            gast_ves = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_VES"], errors="coerce").sum()
             
-            ing_usd = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_USD"].sum()
-            gast_usd = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_USD"].sum()
+            ing_usd = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_USD"], errors="coerce").sum()
+            gast_usd = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_USD"], errors="coerce").sum()
 
             saldo_ves = ing_ves - gast_ves
             saldo_usd = ing_usd - gast_usd
@@ -215,8 +250,6 @@ elif opcion_menu == OPC_REGISTRAR:
         col1, col2 = st.columns(2)
         with col1:
             fecha = st.date_input("Fecha del Movimiento", value=date.today())
-            
-            # Determinar automáticamente la tasa histórica según la fecha seleccionada
             tasa_calculo = obtener_tasa_por_fecha(fecha, tipo_tasa) if tipo_tasa != "Manual" else tasa_activa
             st.caption(f"Tasa aplicada para la fecha {fecha}: **{tasa_calculo:.2f} VES/USD**")
 
@@ -226,9 +259,7 @@ elif opcion_menu == OPC_REGISTRAR:
         with col2:
             grupo = st.selectbox("Grupo", st.session_state.lista_grupos)
             monto_ves = st.number_input("Monto en Bolívares (VES)", min_value=0.0, step=10.0)
-            
             monto_usd = monto_ves / tasa_calculo if tasa_calculo > 0 else 0.0
-            
             st.success(f"Equivalente a Dólares con Tasa Histórica ({tasa_calculo:.2f} VES): **${monto_usd:,.2f} USD**")
             detalle = st.text_input("Detalle / Observación")
 
@@ -252,7 +283,7 @@ elif opcion_menu == OPC_REGISTRAR:
             
             st.session_state.df_movimientos = pd.concat([st.session_state.df_movimientos, nuevo], ignore_index=True)
             guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
-            st.success(f"¡Movimiento registrado con éxito! Guardado en USD: ${monto_usd:,.2f} USD a una tasa de {tasa_calculo:.2f} VES.")
+            st.success(f"¡Movimiento registrado con éxito! Guardado en USD: ${monto_usd:,.2f} USD.")
             st.rerun()
 
     with tab2:
@@ -289,7 +320,6 @@ elif opcion_menu == OPC_REGISTRAR:
                     e_grupo = st.selectbox("Modificar Grupo", st.session_state.lista_grupos, index=idx_grp, key="edit_grp")
                     
                     e_monto_ves = st.number_input("Modificar Monto (VES)", value=float(row["Monto_VES"]), step=10.0, key="edit_mves")
-                    
                     tasa_edit = obtener_tasa_por_fecha(e_fecha, tipo_tasa) if tipo_tasa != "Manual" else tasa_activa
                     e_monto_usd = e_monto_ves / tasa_edit if tasa_edit > 0 else 0.0
                     
@@ -319,7 +349,6 @@ elif opcion_menu == OPC_REGISTRAR:
                         guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
                         st.success("¡Registro eliminado correctamente!")
                         st.rerun()
-
         else:
             st.info("No hay movimientos para editar o eliminar.")
 
@@ -363,11 +392,11 @@ elif opcion_menu == OPC_INVERSIONES:
     
     df_inv = st.session_state.df_inversiones
     if not df_inv.empty:
-        df_inv["Rendimiento ($)"] = df_inv["Valor_Actual_USD"] - df_inv["Monto_Invertido_USD"]
+        df_inv["Rendimiento ($)"] = pd.to_numeric(df_inv["Valor_Actual_USD"], errors="coerce") - pd.to_numeric(df_inv["Monto_Invertido_USD"], errors="coerce")
         
         col_m1, col_m2, col_m3 = st.columns(3)
-        total_inv = df_inv["Monto_Invertido_USD"].sum()
-        total_val = df_inv["Valor_Actual_USD"].sum()
+        total_inv = pd.to_numeric(df_inv["Monto_Invertido_USD"], errors="coerce").sum()
+        total_val = pd.to_numeric(df_inv["Valor_Actual_USD"], errors="coerce").sum()
         total_pnl = total_val - total_inv
         
         col_m1.metric("Capital Invertido", f"${total_inv:,.2f}")
@@ -380,29 +409,87 @@ elif opcion_menu == OPC_INVERSIONES:
 
 # 4. PRESUPUESTO VS REAL
 elif opcion_menu == OPC_PRESUPUESTO:
-    st.subheader("Comparativo de Desempeño Financiero (en $ USD)")
+    st.subheader("🎯 Comparativo de Desempeño Financiero")
+    
+    tab_comp1, tab_comp2, tab_comp3 = st.tabs([
+        "📊 Comparativo (Métricas)", 
+        "➕ Registrar Estimado Manual", 
+        "📋 Ver / Eliminar Estimados"
+    ])
     
     df_est = st.session_state.df_estimaciones
     df_mov = st.session_state.df_movimientos
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("### 📥 Ingresos")
-        ing_est = df_est[df_est["Tipo"] == "Ingreso"]["Monto_Estimado_USD"].sum() if not df_est.empty else 0.0
-        ing_real = df_mov[df_mov["Tipo"] == "Ingreso"]["Monto_USD"].sum() if not df_mov.empty else 0.0
-        st.metric("Ingresos Estimados", f"${ing_est:,.2f}")
-        st.metric("Ingresos Reales (A Tasa Histórica)", f"${ing_real:,.2f}", delta=f"${ing_real - ing_est:,.2f}")
+    # TAB 1: COMPARATIVO Y TABLAS DE ESTIMADO VS REAL
+    with tab_comp1:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("### 📥 Ingresos")
+            ing_est = calcular_total_estimado(df_est, "Ingreso")
+            ing_real = pd.to_numeric(df_mov[df_mov["Tipo"].astype(str).str.strip().str.lower() == "ingreso"]["Monto_USD"], errors="coerce").sum() if not df_mov.empty else 0.0
+            st.metric("Ingresos Estimados", f"${ing_est:,.2f}")
+            st.metric("Ingresos Reales Ejecutados", f"${ing_real:,.2f}", delta=f"${ing_real - ing_est:,.2f}")
 
-    with col_b:
-        st.markdown("### 📤 Gastos")
-        gast_est = df_est[df_est["Tipo"] == "Gasto"]["Monto_Estimado_USD"].sum() if not df_est.empty else 0.0
-        gast_real = df_mov[df_mov["Tipo"] == "Gasto"]["Monto_USD"].sum() if not df_mov.empty else 0.0
-        st.metric("Gastos Estimados", f"${gast_est:,.2f}")
-        st.metric("Gastos Reales (A Tasa Histórica)", f"${gast_real:,.2f}", delta=f"${gast_est - gast_real:,.2f}")
+        with col_b:
+            st.markdown("### 📤 Gastos")
+            gast_est = calcular_total_estimado(df_est, "Gasto")
+            gast_real = pd.to_numeric(df_mov[df_mov["Tipo"].astype(str).str.strip().str.lower() == "gasto"]["Monto_USD"], errors="coerce").sum() if not df_mov.empty else 0.0
+            st.metric("Gastos Estimados", f"${gast_est:,.2f}")
+            st.metric("Gastos Reales Ejecutados", f"${gast_real:,.2f}", delta=f"${gast_est - gast_real:,.2f}")
 
-# 5. CARGAR PRESUPUESTO
+    # TAB 2: AGREGAR UN INGRESO O GASTO ESTIMADO MANUALMENTE
+    with tab_comp2:
+        st.markdown("### ➕ Registrar Nuevo Ingreso o Gasto Estimado")
+        col_est1, col_est2 = st.columns(2)
+        
+        with col_est1:
+            est_tipo = st.selectbox("Tipo de Estimación", ["Gasto", "Ingreso"], key="add_est_tipo")
+            est_categoria = st.text_input("Categoría Estimada", value="Alimentación" if est_tipo == "Gasto" else "Sueldo", key="add_est_cat")
+        
+        with col_est2:
+            est_grupo = st.selectbox("Grupo", st.session_state.lista_grupos, key="add_est_grp")
+            est_monto = st.number_input("Monto Estimado ($ USD)", min_value=0.0, step=10.0, key="add_est_monto")
+
+        if st.button("Guardar Estimación Presupuestaria", type="primary"):
+            next_est_id = 1
+            if not st.session_state.df_estimaciones.empty and "ID" in st.session_state.df_estimaciones.columns:
+                next_est_id = int(pd.to_numeric(st.session_state.df_estimaciones["ID"], errors="coerce").max() or 0) + 1
+
+            nueva_est = pd.DataFrame([{
+                "ID": next_est_id,
+                "Tipo": est_tipo,
+                "Categoria": est_categoria,
+                "Grupo": est_grupo,
+                "Monto_Estimado_USD": est_monto
+            }])
+            
+            st.session_state.df_estimaciones = pd.concat([st.session_state.df_estimaciones, nueva_est], ignore_index=True)
+            guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones)
+            st.success(f"¡Estimación de {est_tipo} por ${est_monto:,.2f} USD agregada exitosamente!")
+            st.rerun()
+
+    # TAB 3: VER TODAS LAS ESTIMACIONES Y ELIMINAR O EDITAR
+    with tab_comp3:
+        st.markdown("### 📋 Presupuestos Estimados Registrados")
+        if not df_est.empty:
+            st.dataframe(df_est, use_container_width=True)
+            
+            if "ID" in df_est.columns:
+                opciones_est = df_est["ID"].astype(str) + " - " + df_est["Tipo"].astype(str) + " - " + df_est["Categoria"].astype(str)
+                est_sel = st.selectbox("Selecciona una estimación para borrar:", opciones_est)
+                
+                if st.button("🗑️ Eliminar Estimación Seleccionada"):
+                    id_est_del = int(est_sel.split(" - ")[0])
+                    st.session_state.df_estimaciones = df_est[df_est["ID"] != id_est_del].reset_index(drop=True)
+                    guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones)
+                    st.success("¡Estimación eliminada con éxito!")
+                    st.rerun()
+        else:
+            st.info("No hay presupuestos estimados registrados aún.")
+
+# 5. CARGAR PRESUPUESTO DESDE ARCHIVO
 elif opcion_menu == OPC_CARGAR:
-    st.subheader("Importar Presupuesto Estimado por Archivo")
+    st.subheader("Importar Presupuesto Estimado por Archivo (Excel / CSV)")
     archivo = st.file_uploader("Sube tu archivo de presupuesto (Excel o CSV)", type=["xlsx", "xls", "csv"])
     
     st.caption("El archivo debe contener las columnas: **Tipo**, **Categoria**, **Grupo**, **Monto_Estimado_USD**")
@@ -415,6 +502,8 @@ elif opcion_menu == OPC_CARGAR:
                 df_cargado = pd.read_excel(archivo)
             
             df_cargado = df_cargado.dropna(how="all")
+            if "ID" not in df_cargado.columns:
+                df_cargado.insert(0, "ID", range(1, len(df_cargado) + 1))
             
             st.write(f"📋 **Vista previa de todas las filas cargadas ({len(df_cargado)} filas encontradas):**")
             st.dataframe(df_cargado, use_container_width=True)
@@ -432,7 +521,8 @@ elif opcion_menu == OPC_RESUMEN:
     st.subheader("Evolución y Distribución de Gastos (en USD)")
     df_mov = st.session_state.df_movimientos
     if not df_mov.empty:
-        df_gastos = df_mov[df_mov["Tipo"] == "Gasto"]
+        df_gastos = df_mov[df_mov["Tipo"].astype(str).str.strip().str.lower() == "gasto"].copy()
+        df_gastos["Monto_USD"] = pd.to_numeric(df_gastos["Monto_USD"], errors="coerce")
         if not df_gastos.empty:
             df_grp = df_gastos.groupby("Grupo")["Monto_USD"].sum().reset_index()
             st.bar_chart(df_grp.set_index("Grupo"))
