@@ -12,7 +12,7 @@ def cargar_datos():
     try:
         df_mov = conn.read(worksheet="Movimientos", ttl=0)
     except Exception:
-        df_mov = pd.DataFrame(columns=["Fecha", "Tipo", "Categoria", "Grupo", "Monto_USD", "Monto_VES", "Detalle"])
+        df_mov = pd.DataFrame(columns=["Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_USD", "Monto_VES", "Detalle"])
 
     try:
         df_est = conn.read(worksheet="Estimaciones", ttl=0)
@@ -25,41 +25,117 @@ def cargar_datos():
     except Exception:
         grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
 
-    return df_mov, df_est, grupos
-
-df_movimientos, df_estimaciones, lista_grupos = cargar_datos()
-
-# Tasa de cambio desde dolarapi.com
-@st.cache_data(ttl=300)
-def obtener_tasa_bcv():
     try:
-        res = requests.get("https://dolarapi.com/v1/dolares/oficial")
-        if res.status_code == 200:
-            return float(res.json()["promedio"])
+        df_cta = conn.read(worksheet="Cuentas", ttl=0)
+        cuentas = df_cta["Nombre_Cuenta"].dropna().tolist()
+    except Exception:
+        cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)"]
+
+    return df_mov, df_est, grupos, cuentas
+
+df_movimientos, df_estimaciones, lista_grupos, lista_cuentas = cargar_datos()
+
+# Tasas de cambio en línea
+@st.cache_data(ttl=300)
+def obtener_tasas():
+    tasa_bcv = 36.5
+    tasa_paralelo = 36.5
+    try:
+        res_bcv = requests.get("https://dolarapi.com/v1/dolares/oficial", timeout=5)
+        if res_bcv.status_code == 200:
+            tasa_bcv = float(res_bcv.json()["promedio"])
     except Exception:
         pass
-    return 36.5  # Valor por defecto en caso de error de red
 
-tasa_bcv = obtener_tasa_bcv()
+    try:
+        res_par = requests.get("https://dolarapi.com/v1/dolares/paralelo", timeout=5)
+        if res_par.status_code == 200:
+            tasa_paralelo = float(res_par.json()["promedio"])
+    except Exception:
+        tasa_paralelo = tasa_bcv
 
-st.title("📊 App Sara - Gestión Financiera")
-st.caption(f"Tasa BCV Oficial: **{tasa_bcv:.2f} VES/USD**")
+    return tasa_bcv, tasa_paralelo
 
-tab1, tab2, tab3, tab4 = st.tabs(["📝 Registrar Movimiento", "🎯 Presupuesto vs Real", "📊 Resumen y Gráficos", "⚙️ Gestión de Grupos"])
+tasa_bcv, tasa_paralelo = obtener_tasas()
 
-# TAB 1: REGISTRAR MOVIMIENTO
-with tab1:
-    st.subheader("Nuevo Registro")
+st.title("📊 App Sara - Gestión Financiera Integrada")
+
+# Encabezado de Tasas
+col_t1, col_t2 = st.columns(2)
+with col_t1:
+    st.metric("💵 Tasa BCV Oficial", f"{tasa_bcv:.2f} VES/USD")
+with col_t2:
+    st.metric("📈 Tasa Paralela / Mercado", f"{tasa_paralelo:.2f} VES/USD")
+
+st.divider()
+
+tabs = st.tabs([
+    "🏛️ Saldos & Cuentas", 
+    "📥 Cargar Presupuesto (Excel/CSV)", 
+    "📝 Registrar Movimiento", 
+    "🎯 Presupuesto vs Real", 
+    "📊 Resumen y Gráficos", 
+    "⚙️ Gestión de Grupos y Cuentas"
+])
+
+# TAB 1: SALDOS DE BANCOS
+with tabs[0]:
+    st.subheader("Saldos Disponibles por Cuenta")
+    if not df_movimientos.empty and "Cuenta" in df_movimientos.columns:
+        saldos = []
+        for cta in lista_cuentas:
+            ing = df_movimientos[(df_movimientos["Cuenta"] == cta) & (df_movimientos["Tipo"] == "Ingreso")]["Monto_USD"].sum()
+            gast = df_movimientos[(df_movimientos["Cuenta"] == cta) & (df_movimientos["Tipo"] == "Gasto")]["Monto_USD"].sum()
+            saldo_usd = ing - gast
+            saldo_ves = saldo_usd * tasa_bcv
+            saldos.append({"Cuenta": cta, "Saldo ($ USD)": saldo_usd, "Saldo (VES)": saldo_ves})
+        
+        df_saldos = pd.DataFrame(saldos)
+        st.dataframe(df_saldos, use_container_width=True)
+        
+        total_usd = df_saldos["Saldo ($ USD)"].sum()
+        st.subheader(f"💰 Saldo Total Consolidado: **${total_usd:,.2f} USD** / **{total_usd * tasa_bcv:,.2f} VES**")
+    else:
+        st.info("Registra tu primer movimiento asociando una cuenta para ver los saldos automáticos.")
+
+# TAB 2: CARGAR PRESUPUESTO (EXCEL / CSV)
+with tabs[1]:
+    st.subheader("Importar Presupuesto Estimado por Archivo")
+    archivo = st.file_uploader("Sube tu archivo de presupuesto (Excel o CSV)", type=["xlsx", "xls", "csv"])
+    
+    st.caption("El archivo debe contener las columnas: **Tipo**, **Categoria**, **Grupo**, **Monto_Estimado_USD**")
+    
+    if archivo is not None:
+        try:
+            if archivo.name.endswith(".csv"):
+                df_cargado = pd.read_csv(archivo)
+            else:
+                df_cargado = pd.read_excel(archivo)
+                
+            st.write("Vista previa del archivo cargado:")
+            st.dataframe(df_cargado.head())
+            
+            if st.button("Guardar Presupuesto en Google Sheets", type="primary"):
+                conn.update(worksheet="Estimaciones", data=df_cargado)
+                st.success("¡Presupuesto importado y guardado exitosamente!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Error al leer el archivo: {e}")
+
+# TAB 3: REGISTRAR MOVIMIENTO
+with tabs[2]:
+    st.subheader("Nuevo Registro Diario")
     col1, col2 = st.columns(2)
     with col1:
         fecha = st.date_input("Fecha")
         tipo = st.selectbox("Tipo de Movimiento", ["Gasto", "Ingreso"])
         categoria = st.text_input("Categoría", value="Alimentación" if tipo == "Gasto" else "Sueldo")
+        cuenta = st.selectbox("Cuenta / Banco", lista_cuentas)
     with col2:
         grupo = st.selectbox("Grupo", lista_grupos)
         monto_usd = st.number_input("Monto ($ USD)", min_value=0.0, step=1.0)
         monto_ves = monto_usd * tasa_bcv
-        st.info(f"Equivalente: **{monto_ves:,.2f} VES**")
+        st.info(f"Equivalente a Tasa Oficial: **{monto_ves:,.2f} VES**")
         detalle = st.text_input("Detalle / Observación")
 
     if st.button("Guardar Movimiento", type="primary"):
@@ -68,22 +144,23 @@ with tab1:
             "Tipo": tipo,
             "Categoria": categoria,
             "Grupo": grupo,
+            "Cuenta": cuenta,
             "Monto_USD": monto_usd,
             "Monto_VES": monto_ves,
             "Detalle": detalle
         }])
         df_actualizado = pd.concat([df_movimientos, nuevo], ignore_index=True)
         conn.update(worksheet="Movimientos", data=df_actualizado)
-        st.success("¡Movimiento registrado con éxito en Google Sheets!")
+        st.success("¡Movimiento registrado correctamente!")
         st.rerun()
 
     st.divider()
-    st.subheader("Historial de Movimientos")
+    st.subheader("Historial Completo de Movimientos")
     st.dataframe(df_movimientos, use_container_width=True)
 
-# TAB 2: PRESUPUESTO VS REAL (Ingresos y Gastos)
-with tab2:
-    st.subheader("Comparativo Estimado vs Real")
+# TAB 4: PRESUPUESTO VS REAL
+with tabs[3]:
+    st.subheader("Comparativo de Desempeño Financiero")
     
     col_a, col_b = st.columns(2)
     with col_a:
@@ -100,9 +177,9 @@ with tab2:
         st.metric("Gastos Estimados", f"${gast_est:,.2f}")
         st.metric("Gastos Reales", f"${gast_real:,.2f}", delta=f"${gast_est - gast_real:,.2f}")
 
-# TAB 3: RESUMEN Y GRÁFICOS
-with tab3:
-    st.subheader("Análisis Visual")
+# TAB 5: RESUMEN Y GRÁFICOS
+with tabs[4]:
+    st.subheader("Evolución y Distribución de Gastos")
     if not df_movimientos.empty:
         df_gastos = df_movimientos[df_movimientos["Tipo"] == "Gasto"]
         if not df_gastos.empty:
@@ -111,31 +188,45 @@ with tab3:
         else:
             st.info("No hay gastos registrados para graficar.")
     else:
-        st.info("Aún no existen registros.")
+        st.info("Aún no existen registros para mostrar métricas.")
 
-# TAB 4: GESTIÓN DE GRUPOS
-with tab4:
-    st.subheader("Configuración de Grupos")
+# TAB 6: GESTIÓN DE GRUPOS Y CUENTAS
+with tabs[5]:
+    st.subheader("Configuración de Parámetros")
     
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        st.markdown("#### ➕ Agregar Grupo")
-        nuevo_grupo = st.text_input("Nombre del nuevo grupo")
+        st.markdown("#### 📁 Gestión de Grupos")
+        nuevo_grupo = st.text_input("Agregar Nuevo Grupo")
         if st.button("Agregar Grupo"):
             if nuevo_grupo and nuevo_grupo not in lista_grupos:
                 lista_grupos.append(nuevo_grupo)
-                df_g = pd.DataFrame({"Nombre_Grupo": lista_grupos})
-                conn.update(worksheet="Grupos", data=df_g)
-                st.success(f"Grupo '{nuevo_grupo}' agregado con éxito.")
+                conn.update(worksheet="Grupos", data=pd.DataFrame({"Nombre_Grupo": lista_grupos}))
+                st.success(f"Grupo '{nuevo_grupo}' agregado.")
+                st.rerun()
+
+        grupo_eliminar = st.selectbox("Eliminar Grupo Existente", lista_grupos)
+        if st.button("Eliminar Grupo"):
+            if grupo_eliminar in lista_grupos:
+                lista_grupos.remove(grupo_eliminar)
+                conn.update(worksheet="Grupos", data=pd.DataFrame({"Nombre_Grupo": lista_grupos}))
+                st.success(f"Grupo '{grupo_eliminar}' eliminado.")
                 st.rerun()
 
     with col_g2:
-        st.markdown("#### 🗑️ Eliminar Grupo")
-        grupo_eliminar = st.selectbox("Seleccionar grupo a eliminar", lista_grupos)
-        if st.button("Eliminar Grupo", type="secondary"):
-            if grupo_eliminar in lista_grupos:
-                lista_grupos.remove(grupo_eliminar)
-                df_g = pd.DataFrame({"Nombre_Grupo": lista_grupos})
-                conn.update(worksheet="Grupos", data=df_g)
-                st.success(f"Grupo '{grupo_eliminar}' eliminado.")
+        st.markdown("#### 🏦 Gestión de Cuentas")
+        nueva_cuenta = st.text_input("Agregar Nueva Cuenta / Banco")
+        if st.button("Agregar Cuenta"):
+            if nueva_cuenta and nueva_cuenta not in lista_cuentas:
+                lista_cuentas.append(nueva_cuenta)
+                conn.update(worksheet="Cuentas", data=pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
+                st.success(f"Cuenta '{nueva_cuenta}' agregada.")
+                st.rerun()
+
+        cuenta_eliminar = st.selectbox("Eliminar Cuenta Existente", lista_cuentas)
+        if st.button("Eliminar Cuenta"):
+            if cuenta_eliminar in lista_cuentas:
+                lista_cuentas.remove(cuenta_eliminar)
+                conn.update(worksheet="Cuentas", data=pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
+                st.success(f"Cuenta '{cuenta_eliminar}' eliminada.")
                 st.rerun()
