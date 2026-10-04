@@ -80,6 +80,15 @@ def inicializar_estado():
                 columns=["Fecha", "Plataforma", "Activo", "Tipo_Operacion", "Monto_Invertido_USD", "Valor_Actual_USD", "Detalle"]
             )
 
+    if "df_saldos_iniciales" not in st.session_state:
+        try:
+            df_si = conn.read(worksheet="Saldos_Iniciales", ttl=0)
+            st.session_state.df_saldos_iniciales = df_si.dropna(how="all")
+        except Exception:
+            st.session_state.df_saldos_iniciales = pd.DataFrame(
+                columns=["Cuenta", "Saldo_Inicial_VES", "Saldo_Inicial_USD"]
+            )
+
     if "lista_grupos" not in st.session_state:
         try:
             df_grup = conn.read(worksheet="Grupos", ttl=0)
@@ -96,9 +105,9 @@ def inicializar_estado():
             cuentas = df_cta["Nombre_Cuenta"].dropna().astype(str).str.strip().tolist()
             st.session_state.lista_cuentas = [c for c in cuentas if c and c != "nan"]
             if not st.session_state.lista_cuentas:
-                st.session_state.lista_cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
+                st.session_state.lista_cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)", "Cashea"]
         except Exception:
-            st.session_state.lista_cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
+            st.session_state.lista_cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)", "Cashea"]
 
 inicializar_estado()
 
@@ -196,7 +205,7 @@ if st.sidebar.button("🔄 Actualizar Tasas"):
 
 st.sidebar.divider()
 
-OPC_SALDOS = "🏛️ Saldos & Cuentas"
+OPC_SALDOS = "🏛️️ Saldos & Cuentas"
 OPC_REGISTRAR = "📝 Registrar / Editar Movimiento"
 OPC_INVERSIONES = "📈 Portafolio de Inversiones"
 OPC_PRESUPUESTO = "🎯 Presupuesto vs Real"
@@ -221,7 +230,7 @@ st.title("📊 App Sara - Gestión Financiera Integrada")
 
 # 1. SALDOS & CUENTAS
 if opcion_menu == OPC_SALDOS:
-    st.subheader("Saldos Disponibles por Cuenta / Banco")
+    st.subheader("🏛️ Saldos Disponibles y Fondos por Banco / Startup")
     
     col_t1, col_t2, col_t3 = st.columns(3)
     with col_t1:
@@ -232,37 +241,83 @@ if opcion_menu == OPC_SALDOS:
         st.metric("⚡ Tasa Activa Actual", f"{tasa_activa:.2f} VES/USD")
     st.divider()
 
+    tab_saldos1, tab_saldos2 = st.tabs(["📊 Consolidated Account Balances", "⚙️️ Configurar Saldos Iniciales"])
+
     df_mov = st.session_state.df_movimientos
-    if not df_mov.empty and "Cuenta" in df_mov.columns:
+    df_si = st.session_state.df_saldos_iniciales
+
+    with tab_saldos1:
         saldos = []
         for cta in st.session_state.lista_cuentas:
-            ing_ves = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_VES"], errors="coerce").sum()
-            gast_ves = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_VES"], errors="coerce").sum()
-            
-            ing_usd = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_USD"], errors="coerce").sum()
-            gast_usd = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_USD"], errors="coerce").sum()
+            # Obtener saldos iniciales de la cuenta
+            s_init_ves = 0.0
+            s_init_usd = 0.0
+            if not df_si.empty and "Cuenta" in df_si.columns:
+                match = df_si[df_si["Cuenta"] == cta]
+                if not match.empty:
+                    s_init_ves = pd.to_numeric(match["Saldo_Inicial_VES"].iloc[0], errors="coerce") or 0.0
+                    s_init_usd = pd.to_numeric(match["Saldo_Inicial_USD"].iloc[0], errors="coerce") or 0.0
 
-            saldo_ves = ing_ves - gast_ves
-            saldo_usd = ing_usd - gast_usd
+            # Calcular ingresos y gastos registrados
+            ing_ves = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_VES"], errors="coerce").sum() if not df_mov.empty else 0.0
+            gast_ves = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_VES"], errors="coerce").sum() if not df_mov.empty else 0.0
+            
+            ing_usd = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_USD"], errors="coerce").sum() if not df_mov.empty else 0.0
+            gast_usd = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_USD"], errors="coerce").sum() if not df_mov.empty else 0.0
+
+            saldo_total_ves = s_init_ves + ing_ves - gast_ves
+            saldo_total_usd = s_init_usd + ing_usd - gast_usd
 
             saldos.append({
-                "Cuenta": cta, 
-                "Saldo (VES)": saldo_ves, 
-                "Saldo Registrado ($ USD)": saldo_usd
+                "Cuenta / Banco / Startup": cta, 
+                "Saldo Inicial (VES)": s_init_ves,
+                "Saldo Inicial ($ USD)": s_init_usd,
+                "Movimientos (VES)": ing_ves - gast_ves,
+                "Movimientos ($ USD)": ing_usd - gast_usd,
+                "Saldo Total Disponible (VES)": saldo_total_ves, 
+                "Saldo Total Disponible ($ USD)": saldo_total_usd
             })
         
         df_saldos = pd.DataFrame(saldos)
         st.dataframe(df_saldos, use_container_width=True)
         
-        total_ves = df_saldos["Saldo (VES)"].sum()
-        total_usd = df_saldos["Saldo Registrado ($ USD)"].sum()
-        st.subheader(f"💰 Saldo Total Consolidado: **{total_ves:,.2f} VES** / **${total_usd:,.2f} USD**")
-    else:
-        st.info("Registra tu primer movimiento asociando una cuenta para calcular los saldos automáticos.")
+        total_ves = df_saldos["Saldo Total Disponible (VES)"].sum()
+        total_usd = df_saldos["Saldo Total Disponible ($ USD)"].sum()
+        st.subheader(f"💰 Saldo Total Consolidado en Fondos: **{total_ves:,.2f} VES** / **${total_usd:,.2f} USD**")
+
+    with tab_saldos2:
+        st.markdown("### ⚙️ Establecer Saldo Base Inicial por Cuenta")
+        st.caption("Ingresa los fondos de arranque (al 01/10/2026) con los que cuenta cada entidad financiera o startup.")
+        
+        col_si1, col_si2 = st.columns(2)
+        with col_si1:
+            cta_sel_si = st.selectbox("Seleccionar Cuenta / Banco / Startup", st.session_state.lista_cuentas, key="sel_si_cta")
+            init_ves = st.number_input("Saldo Inicial en Bolívares (VES)", min_value=0.0, step=100.0, key="txt_si_ves")
+        with col_si2:
+            init_usd = st.number_input("Saldo Inicial en Dólares ($ USD)", min_value=0.0, step=10.0, key="txt_si_usd")
+
+        if st.button("Guardar Saldo Inicial", type="primary"):
+            if not df_si.empty and "Cuenta" in df_si.columns and cta_sel_si in df_si["Cuenta"].values:
+                # Actualizar existente
+                idx = df_si.index[df_si["Cuenta"] == cta_sel_si][0]
+                st.session_state.df_saldos_iniciales.at[idx, "Saldo_Inicial_VES"] = init_ves
+                st.session_state.df_saldos_iniciales.at[idx, "Saldo_Inicial_USD"] = init_usd
+            else:
+                # Crear nuevo registro
+                nuevo_si = pd.DataFrame([{
+                    "Cuenta": cta_sel_si,
+                    "Saldo_Inicial_VES": init_ves,
+                    "Saldo_Inicial_USD": init_usd
+                }])
+                st.session_state.df_saldos_iniciales = pd.concat([st.session_state.df_saldos_iniciales, nuevo_si], ignore_index=True)
+
+            guardar_en_sheets("Saldos_Iniciales", st.session_state.df_saldos_iniciales)
+            st.success(f"¡Saldo inicial guardado para '{cta_sel_si}'!")
+            st.rerun()
 
 # 2. REGISTRAR / EDITAR / ELIMINAR MOVIMIENTOS
 elif opcion_menu == OPC_REGISTRAR:
-    tab1, tab2 = st.tabs(["➕ Nuevo Registro", "✏️️ Modificar o Eliminar Registro"])
+    tab1, tab2 = st.tabs(["➕ Nuevo Registro", "✏️ Modificar o Eliminar Registro"])
     
     with tab1:
         st.subheader("Nuevo Registro Diario en Bolívares (VES)")
