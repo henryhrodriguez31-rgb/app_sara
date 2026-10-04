@@ -58,9 +58,9 @@ def inicializar_estado():
             grupos = df_grup["Nombre_Grupo"].dropna().astype(str).str.strip().tolist()
             st.session_state.lista_grupos = [g for g in grupos if g and g != "nan"]
             if not st.session_state.lista_grupos:
-                st.session_state.lista_grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
+                st.session_state.lista_grupos = ["Gastos fijos", "Fondo ahorro", "Entretenimiento", "Personal", "Hogar", "Trabajo"]
         except Exception:
-            st.session_state.lista_grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
+            st.session_state.lista_grupos = ["Gastos fijos", "Fondo ahorro", "Entretenimiento", "Personal", "Hogar", "Trabajo"]
 
     if "lista_cuentas" not in st.session_state:
         try:
@@ -88,37 +88,54 @@ def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
     except Exception as e:
         st.error(f"Error guardando en Google Sheets: {e}")
 
-# Función para calcular la suma limpia de las estimaciones
-def calcular_total_estimado(df_est, tipo_filtro):
-    if df_est.empty:
+# Cálculo ultra-robusto para sumar Ingresos y Gastos Estimados
+def calcular_total_estimado(df_est, tipo_buscado):
+    if df_est is None or df_est.empty:
         return 0.0
     
-    col_tipo = [c for c in df_est.columns if "tipo" in c.lower()]
-    col_monto = [c for c in df_est.columns if "monto" in c.lower() or "estimado" in c.lower() or "usd" in c.lower()]
+    df = df_est.copy()
+    df.columns = [str(c).strip() for c in df.columns]
     
+    col_tipo = None
+    for c in df.columns:
+        if "tipo" in c.lower():
+            col_tipo = c
+            break
+            
+    col_monto = None
+    for c in df.columns:
+        clow = c.lower()
+        if "monto" in clow or "estimado" in clow or "usd" in clow:
+            col_monto = c
+            break
+
+    if not col_tipo and len(df.columns) >= 1:
+        col_tipo = df.columns[0]
+    if not col_monto and len(df.columns) >= 4:
+        col_monto = df.columns[3]
+    elif not col_monto and len(df.columns) >= 2:
+        col_monto = df.columns[-1]
+
     if not col_tipo or not col_monto:
         return 0.0
-        
-    c_tipo = col_tipo[0]
-    c_monto = col_monto[0]
-    
-    # Filtrar ignorando espacios y diferencias de mayúsculas/minúsculas
-    mask = df_est[c_tipo].astype(str).str.strip().str.lower() == tipo_filtro.lower()
-    df_filtrado = df_est[mask]
-    
+
+    mask = df[col_tipo].astype(str).str.strip().str.lower() == tipo_buscado.lower()
+    df_filtrado = df[mask]
+
     if df_filtrado.empty:
         return 0.0
-        
-    # Limpieza estricta de números
-    s_monto = (
-        df_filtrado[c_monto]
-        .astype(str)
-        .str.replace("$", "", regex=False)
-        .str.replace(",", "", regex=False)
-        .str.strip()
-    )
-    
-    return pd.to_numeric(s_monto, errors="coerce").sum()
+
+    def limpiar_num(v):
+        if pd.isna(v):
+            return 0.0
+        s = str(v).replace("$", "").replace("USD", "").replace("usd", "").strip()
+        if "," in s and "." in s:
+            s = s.replace(",", "")
+        elif "," in s and "." not in s:
+            s = s.replace(",", ".")
+        return pd.to_numeric(s, errors="coerce") or 0.0
+
+    return df_filtrado[col_monto].apply(limpiar_num).sum()
 
 # Obtener tasas del día desde API
 @st.cache_data(ttl=300)
@@ -344,7 +361,7 @@ elif opcion_menu == OPC_REGISTRAR:
                         st.rerun()
 
                 with col_btn2:
-                    if st.button("🗑️ Eliminar Movimiento", type="secondary"):
+                    if st.button("🗑️️ Eliminar Movimiento", type="secondary"):
                         st.session_state.df_movimientos = st.session_state.df_movimientos.drop(idx).reset_index(drop=True)
                         guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
                         st.success("¡Registro eliminado correctamente!")
