@@ -90,7 +90,6 @@ def obtener_tasas():
 
     return tasa_bcv, tasa_paralelo
 
-# ASIGNACIÓN GLOBAL DE VARIABLES
 tasa_bcv, tasa_paralelo = obtener_tasas()
 
 # BARRA LATERAL (MENU IZQUIERDO)
@@ -115,23 +114,32 @@ if st.sidebar.button("🔄 Actualizar Tasas"):
 
 st.sidebar.divider()
 
+# OPCIONES DE MENÚ EN VARIABLES
+OPC_SALDOS = "🏛️ Saldos & Cuentas"
+OPC_REGISTRAR = "📝 Registrar Movimiento"
+OPC_INVERSIONES = "📈 Portafolio de Inversiones"
+OPC_PRESUPUESTO = "🎯 Presupuesto vs Real"
+OPC_CARGAR = "📥 Cargar Presupuesto (Excel/CSV)"
+OPC_RESUMEN = "📊 Resumen y Gráficos"
+OPC_CONFIGURACION = "⚙️ Gestión de Grupos y Cuentas"
+
 opcion_menu = st.sidebar.radio(
     "Selecciona una opción:",
     [
-        "🏛️ Saldos & Cuentas",
-        "📝 Registrar Movimiento",
-        "📈 Portafolio de Inversiones",
-        "🎯 Presupuesto vs Real",
-        "📥 Cargar Presupuesto (Excel/CSV)",
-        "📊 Resumen y Gráficos",
-        "⚙️️ Gestión de Grupos y Cuentas"
+        OPC_SALDOS,
+        OPC_REGISTRAR,
+        OPC_INVERSIONES,
+        OPC_PRESUPUESTO,
+        OPC_CARGAR,
+        OPC_RESUMEN,
+        OPC_CONFIGURACION
     ]
 )
 
 st.title("📊 App Sara - Gestión Financiera Integrada")
 
 # 1. SALDOS & CUENTAS
-if opcion_menu == "🏛️ Saldos & Cuentas":
+if opcion_menu == OPC_SALDOS:
     st.subheader("Saldos Disponibles por Cuenta / Banco")
     
     col_t1, col_t2, col_t3 = st.columns(3)
@@ -161,7 +169,7 @@ if opcion_menu == "🏛️ Saldos & Cuentas":
         st.info("Registra tu primer movimiento asociando una cuenta para calcular los saldos automáticos.")
 
 # 2. REGISTRAR MOVIMIENTO
-elif opcion_menu == "📝 Registrar Movimiento":
+elif opcion_menu == OPC_REGISTRAR:
     st.subheader("Nuevo Registro Diario")
     col1, col2 = st.columns(2)
     with col1:
@@ -197,7 +205,7 @@ elif opcion_menu == "📝 Registrar Movimiento":
     st.dataframe(df_movimientos, use_container_width=True)
 
 # 3. PORTAFOLIO DE INVERSIONES
-elif opcion_menu == "📈 Portafolio de Inversiones":
+elif opcion_menu == OPC_INVERSIONES:
     st.subheader("Seguimiento de Inversiones (Quantfury & Binance)")
     
     with st.expander("➕ Registrar Nueva Inversión / Posición"):
@@ -247,7 +255,7 @@ elif opcion_menu == "📈 Portafolio de Inversiones":
         st.info("Aún no tienes posiciones de inversión registradas.")
 
 # 4. PRESUPUESTO VS REAL
-elif opcion_menu == "🎯 Presupuesto vs Real":
+elif opcion_menu == OPC_PRESUPUESTO:
     st.subheader("Comparativo de Desempeño Financiero")
     
     col_a, col_b = st.columns(2)
@@ -266,7 +274,7 @@ elif opcion_menu == "🎯 Presupuesto vs Real":
         st.metric("Gastos Reales", f"${gast_real:,.2f}", delta=f"${gast_est - gast_real:,.2f}")
 
 # 5. CARGAR PRESUPUESTO
-elif opcion_menu == "📥 Cargar Presupuesto (Excel/CSV)":
+elif opcion_menu == OPC_CARGAR:
     st.subheader("Importar Presupuesto Estimado por Archivo")
     archivo = st.file_uploader("Sube tu archivo de presupuesto (Excel o CSV)", type=["xlsx", "xls", "csv"])
     
@@ -290,7 +298,7 @@ elif opcion_menu == "📥 Cargar Presupuesto (Excel/CSV)":
             st.error(f"Error al leer el archivo: {e}")
 
 # 6. RESUMEN Y GRÁFICOS
-elif opcion_menu == "📊 Resumen y Gráficos":
+elif opcion_menu == OPC_RESUMEN:
     st.subheader("Evolución y Distribución de Gastos")
     if not df_movimientos.empty:
         df_gastos = df_movimientos[df_movimientos["Tipo"] == "Gasto"]
@@ -303,22 +311,24 @@ elif opcion_menu == "📊 Resumen y Gráficos":
         st.info("Aún no existen registros para mostrar métricas.")
 
 # 7. GESTIÓN DE GRUPOS Y CUENTAS
-elif opcion_menu == "⚙️ Gestión de Grupos y Cuentas":
-    st.subheader("Configuración de Parámetros")
+elif opcion_menu == OPC_CONFIGURACION:
+    st.subheader("Configuración de Grupos y Cuentas Bancarias")
     
     col_g1, col_g2 = st.columns(2)
+    
     with col_g1:
-        st.markdown("#### 📁 Gestión de Grupos")
-        nuevo_grupo = st.text_input("Agregar Nuevo Grupo")
-        if st.button("Agregar Grupo"):
+        st.markdown("### 📁 Gestión de Grupos")
+        nuevo_grupo = st.text_input("Nombre del nuevo grupo", key="txt_nuevo_grupo")
+        if st.button("➕ Agregar Grupo", key="btn_add_grupo"):
             if nuevo_grupo and nuevo_grupo not in lista_grupos:
                 lista_grupos.append(nuevo_grupo)
                 conn.update(worksheet="Grupos", data=pd.DataFrame({"Nombre_Grupo": lista_grupos}))
-                st.success(f"Grupo '{nuevo_grupo}' agregado.")
+                st.success(f"Grupo '{nuevo_grupo}' agregado con éxito.")
                 st.rerun()
 
-        grupo_eliminar = st.selectbox("Eliminar Grupo Existente", lista_grupos)
-        if st.button("Eliminar Grupo"):
+        st.divider()
+        grupo_eliminar = st.selectbox("Seleccionar grupo a eliminar", lista_grupos, key="sel_del_grupo")
+        if st.button("🗑️ Eliminar Grupo", key="btn_del_grupo"):
             if grupo_eliminar in lista_grupos:
                 lista_grupos.remove(grupo_eliminar)
                 conn.update(worksheet="Grupos", data=pd.DataFrame({"Nombre_Grupo": lista_grupos}))
@@ -326,17 +336,18 @@ elif opcion_menu == "⚙️ Gestión de Grupos y Cuentas":
                 st.rerun()
 
     with col_g2:
-        st.markdown("#### 🏦 Gestión de Cuentas")
-        nueva_cuenta = st.text_input("Agregar Nueva Cuenta / Banco")
-        if st.button("Agregar Cuenta"):
+        st.markdown("### 🏦 Gestión de Cuentas / Bancos")
+        nueva_cuenta = st.text_input("Nombre del nuevo banco/cuenta", key="txt_nueva_cuenta")
+        if st.button("➕ Agregar Cuenta", key="btn_add_cuenta"):
             if nueva_cuenta and nueva_cuenta not in lista_cuentas:
                 lista_cuentas.append(nueva_cuenta)
                 conn.update(worksheet="Cuentas", data=pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
-                st.success(f"Cuenta '{nueva_cuenta}' agregada.")
+                st.success(f"Cuenta '{nueva_cuenta}' agregada con éxito.")
                 st.rerun()
 
-        cuenta_eliminar = st.selectbox("Eliminar Cuenta Existente", lista_cuentas)
-        if st.button("Eliminar Cuenta"):
+        st.divider()
+        cuenta_eliminar = st.selectbox("Seleccionar cuenta a eliminar", lista_cuentas, key="sel_del_cuenta")
+        if st.button("🗑️ Eliminar Cuenta", key="btn_del_cuenta"):
             if cuenta_eliminar in lista_cuentas:
                 lista_cuentas.remove(cuenta_eliminar)
                 conn.update(worksheet="Cuentas", data=pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
