@@ -2,21 +2,33 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import requests
+from datetime import date, datetime
 
 st.set_page_config(page_title="App Sara", page_icon="📊", layout="wide")
 
 # Conexión a Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# Diccionario de Tasas Históricas (Octubre 2026)
+TASAS_HISTORICAS_OCT_2026 = {
+    "2026-10-01": 860.18,
+    "2026-10-02": 866.56,
+    "2026-10-03": 871.37,
+    "2026-10-04": 871.37,
+}
+
 # Cargar datos e inicializar en st.session_state
 def inicializar_estado():
     if "df_movimientos" not in st.session_state:
         try:
             df_mov = conn.read(worksheet="Movimientos", ttl=0)
-            st.session_state.df_movimientos = df_mov.dropna(how="all")
+            df_mov = df_mov.dropna(how="all")
+            if not df_mov.empty and "ID" not in df_mov.columns:
+                df_mov.insert(0, "ID", range(1, len(df_mov) + 1))
+            st.session_state.df_movimientos = df_mov
         except Exception:
             st.session_state.df_movimientos = pd.DataFrame(
-                columns=["Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"]
+                columns=["ID", "Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"]
             )
 
     if "df_estimaciones" not in st.session_state:
@@ -59,7 +71,7 @@ def inicializar_estado():
 
 inicializar_estado()
 
-# Guardado en Google Sheets asegurando guardar todas las filas
+# Guardado en Google Sheets
 def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
     try:
         df_padded = df_data.copy()
@@ -73,10 +85,10 @@ def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
     except Exception as e:
         st.error(f"Error guardando en Google Sheets: {e}")
 
-# Obtener tasas de cambio
+# Obtener tasas del día desde API
 @st.cache_data(ttl=300)
 def obtener_tasas():
-    tasa_bcv = 866.56
+    tasa_bcv = 871.37
     tasa_paralelo = 974.38
     
     try:
@@ -95,22 +107,33 @@ def obtener_tasas():
 
     return tasa_bcv, tasa_paralelo
 
-tasa_bcv, tasa_paralelo = obtener_tasas()
+tasa_bcv_hoy, tasa_paralelo_hoy = obtener_tasas()
+
+def obtener_tasa_por_fecha(fecha_obj, modo_tasa):
+    fecha_str = str(fecha_obj)
+    if fecha_str in TASAS_HISTORICAS_OCT_2026:
+        return TASAS_HISTORICAS_OCT_2026[fecha_str]
+    elif modo_tasa == "BCV Oficial":
+        return tasa_bcv_hoy
+    elif modo_tasa == "Paralelo":
+        return tasa_paralelo_hoy
+    else:
+        return tasa_bcv_hoy
 
 # BARRA LATERAL (MENU IZQUIERDO)
 st.sidebar.title("📌 App Sara Menu")
 
-tipo_tasa = st.sidebar.radio("Tasa activa para nuevos registros:", ["BCV Oficial", "Paralelo", "Manual"])
+tipo_tasa = st.sidebar.radio("Tasa activa de referencia:", ["BCV Oficial", "Paralelo", "Manual"])
 
 if tipo_tasa == "BCV Oficial":
-    tasa_activa = tasa_bcv
+    tasa_activa = tasa_bcv_hoy
 elif tipo_tasa == "Paralelo":
-    tasa_activa = tasa_paralelo
+    tasa_activa = tasa_paralelo_hoy
 else:
-    tasa_activa = st.sidebar.number_input("Tasa personalizada (VES/USD)", min_value=1.0, value=tasa_bcv, step=0.1)
+    tasa_activa = st.sidebar.number_input("Tasa personalizada (VES/USD)", min_value=1.0, value=tasa_bcv_hoy, step=0.1)
 
-st.sidebar.caption(f"💵 Tasa BCV: **{tasa_bcv:.2f} VES**")
-st.sidebar.caption(f"📈 Tasa Paralela: **{tasa_paralelo:.2f} VES**")
+st.sidebar.caption(f"💵 Tasa BCV Hoy: **{tasa_bcv_hoy:.2f} VES**")
+st.sidebar.caption(f"📈 Tasa Paralela Hoy: **{tasa_paralelo_hoy:.2f} VES**")
 st.sidebar.caption(f"⚡ Tasa Activa Seleccionada: **{tasa_activa:.2f} VES**")
 
 if st.sidebar.button("🔄 Actualizar Tasas"):
@@ -120,7 +143,7 @@ if st.sidebar.button("🔄 Actualizar Tasas"):
 st.sidebar.divider()
 
 OPC_SALDOS = "🏛️ Saldos & Cuentas"
-OPC_REGISTRAR = "📝 Registrar Movimiento"
+OPC_REGISTRAR = "📝 Registrar / Editar Movimiento"
 OPC_INVERSIONES = "📈 Portafolio de Inversiones"
 OPC_PRESUPUESTO = "🎯 Presupuesto vs Real"
 OPC_CARGAR = "📥 Cargar Presupuesto (Excel/CSV)"
@@ -148,9 +171,9 @@ if opcion_menu == OPC_SALDOS:
     
     col_t1, col_t2, col_t3 = st.columns(3)
     with col_t1:
-        st.metric("💵 Tasa BCV Oficial", f"{tasa_bcv:.2f} VES/USD")
+        st.metric("💵 Tasa BCV Hoy", f"{tasa_bcv_hoy:.2f} VES/USD")
     with col_t2:
-        st.metric("📈 Tasa Paralela", f"{tasa_paralelo:.2f} VES/USD")
+        st.metric("📈 Tasa Paralela Hoy", f"{tasa_paralelo_hoy:.2f} VES/USD")
     with col_t3:
         st.metric("⚡ Tasa Activa Actual", f"{tasa_activa:.2f} VES/USD")
     st.divider()
@@ -183,41 +206,122 @@ if opcion_menu == OPC_SALDOS:
     else:
         st.info("Registra tu primer movimiento asociando una cuenta para calcular los saldos automáticos.")
 
-# 2. REGISTRAR MOVIMIENTO
+# 2. REGISTRAR / EDITAR / ELIMINAR MOVIMIENTOS
 elif opcion_menu == OPC_REGISTRAR:
-    st.subheader("Nuevo Registro Diario en Bolívares (VES)")
-    col1, col2 = st.columns(2)
-    with col1:
-        fecha = st.date_input("Fecha")
-        tipo = st.selectbox("Tipo de Movimiento", ["Gasto", "Ingreso"])
-        categoria = st.text_input("Categoría", value="Alimentación" if tipo == "Gasto" else "Sueldo")
-        cuenta = st.selectbox("Cuenta / Banco", st.session_state.lista_cuentas)
-    with col2:
-        grupo = st.selectbox("Grupo", st.session_state.lista_grupos)
-        monto_ves = st.number_input("Monto en Bolívares (VES)", min_value=0.0, step=10.0)
-        
-        monto_usd = monto_ves / tasa_activa if tasa_activa > 0 else 0.0
-        
-        st.success(f"Equivalente a Dólares con Tasa del Día ({tasa_activa:.2f} VES): **${monto_usd:,.2f} USD**")
-        detalle = st.text_input("Detalle / Observación")
+    tab1, tab2 = st.tabs(["➕ Nuevo Registro", "✏️ Modificar o Eliminar Registro"])
+    
+    with tab1:
+        st.subheader("Nuevo Registro Diario en Bolívares (VES)")
+        col1, col2 = st.columns(2)
+        with col1:
+            fecha = st.date_input("Fecha del Movimiento", value=date.today())
+            
+            # Determinar automáticamente la tasa histórica según la fecha seleccionada
+            tasa_calculo = obtener_tasa_por_fecha(fecha, tipo_tasa) if tipo_tasa != "Manual" else tasa_activa
+            st.caption(f"Tasa aplicada para la fecha {fecha}: **{tasa_calculo:.2f} VES/USD**")
 
-    if st.button("Guardar Movimiento", type="primary"):
-        nuevo = pd.DataFrame([{
-            "Fecha": str(fecha),
-            "Tipo": tipo,
-            "Categoria": categoria,
-            "Grupo": grupo,
-            "Cuenta": cuenta,
-            "Monto_VES": monto_ves,
-            "Tasa_Usada": tasa_activa,
-            "Monto_USD": round(monto_usd, 2),
-            "Detalle": detalle
-        }])
+            tipo = st.selectbox("Tipo de Movimiento", ["Gasto", "Ingreso"])
+            categoria = st.text_input("Categoría", value="Alimentación" if tipo == "Gasto" else "Sueldo")
+            cuenta = st.selectbox("Cuenta / Banco", st.session_state.lista_cuentas)
+        with col2:
+            grupo = st.selectbox("Grupo", st.session_state.lista_grupos)
+            monto_ves = st.number_input("Monto en Bolívares (VES)", min_value=0.0, step=10.0)
+            
+            monto_usd = monto_ves / tasa_calculo if tasa_calculo > 0 else 0.0
+            
+            st.success(f"Equivalente a Dólares con Tasa Histórica ({tasa_calculo:.2f} VES): **${monto_usd:,.2f} USD**")
+            detalle = st.text_input("Detalle / Observación")
+
+        if st.button("Guardar Movimiento", type="primary"):
+            next_id = 1
+            if not st.session_state.df_movimientos.empty and "ID" in st.session_state.df_movimientos.columns:
+                next_id = int(pd.to_numeric(st.session_state.df_movimientos["ID"], errors="coerce").max() or 0) + 1
+
+            nuevo = pd.DataFrame([{
+                "ID": next_id,
+                "Fecha": str(fecha),
+                "Tipo": tipo,
+                "Categoria": categoria,
+                "Grupo": grupo,
+                "Cuenta": cuenta,
+                "Monto_VES": monto_ves,
+                "Tasa_Usada": tasa_calculo,
+                "Monto_USD": round(monto_usd, 2),
+                "Detalle": detalle
+            }])
+            
+            st.session_state.df_movimientos = pd.concat([st.session_state.df_movimientos, nuevo], ignore_index=True)
+            guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
+            st.success(f"¡Movimiento registrado con éxito! Guardado en USD: ${monto_usd:,.2f} USD a una tasa de {tasa_calculo:.2f} VES.")
+            st.rerun()
+
+    with tab2:
+        st.subheader("Gestión y Modificación de Movimientos")
+        df_mov = st.session_state.df_movimientos
         
-        st.session_state.df_movimientos = pd.concat([st.session_state.df_movimientos, nuevo], ignore_index=True)
-        guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
-        st.success(f"¡Movimiento registrado con éxito! Guardado en USD: ${monto_usd:,.2f} USD a una tasa de {tasa_activa:.2f} VES.")
-        st.rerun()
+        if not df_mov.empty and "ID" in df_mov.columns:
+            opciones_ids = df_mov["ID"].astype(str) + " - " + df_mov["Fecha"].astype(str) + " - " + df_mov["Categoria"].astype(str) + " (" + df_mov["Monto_VES"].astype(str) + " VES)"
+            mov_seleccionado = st.selectbox("Selecciona un movimiento para editar o eliminar:", opciones_ids)
+            
+            id_sel = int(mov_seleccionado.split(" - ")[0])
+            idx_registro = df_mov.index[df_mov["ID"] == id_sel].tolist()
+            
+            if idx_registro:
+                idx = idx_registro[0]
+                row = df_mov.loc[idx]
+                
+                col_e1, col_e2 = st.columns(2)
+                with col_e1:
+                    try:
+                        fecha_val = datetime.strptime(str(row["Fecha"]), "%Y-%m-%d").date()
+                    except Exception:
+                        fecha_val = date.today()
+
+                    e_fecha = st.date_input("Modificar Fecha", value=fecha_val, key="edit_fecha")
+                    e_tipo = st.selectbox("Modificar Tipo", ["Gasto", "Ingreso"], index=0 if row["Tipo"] == "Gasto" else 1, key="edit_tipo")
+                    e_categoria = st.text_input("Modificar Categoría", value=str(row["Categoria"]), key="edit_cat")
+                    
+                    idx_cta = st.session_state.lista_cuentas.index(row["Cuenta"]) if row["Cuenta"] in st.session_state.lista_cuentas else 0
+                    e_cuenta = st.selectbox("Modificar Cuenta", st.session_state.lista_cuentas, index=idx_cta, key="edit_cta")
+
+                with col_e2:
+                    idx_grp = st.session_state.lista_grupos.index(row["Grupo"]) if row["Grupo"] in st.session_state.lista_grupos else 0
+                    e_grupo = st.selectbox("Modificar Grupo", st.session_state.lista_grupos, index=idx_grp, key="edit_grp")
+                    
+                    e_monto_ves = st.number_input("Modificar Monto (VES)", value=float(row["Monto_VES"]), step=10.0, key="edit_mves")
+                    
+                    tasa_edit = obtener_tasa_por_fecha(e_fecha, tipo_tasa) if tipo_tasa != "Manual" else tasa_activa
+                    e_monto_usd = e_monto_ves / tasa_edit if tasa_edit > 0 else 0.0
+                    
+                    st.info(f"Nuevo valor en USD recalculado ({tasa_edit:.2f} VES): **${e_monto_usd:,.2f} USD**")
+                    e_detalle = st.text_input("Modificar Detalle", value=str(row["Detalle"]), key="edit_det")
+
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button("💾 Guardar Cambios", type="primary"):
+                        st.session_state.df_movimientos.at[idx, "Fecha"] = str(e_fecha)
+                        st.session_state.df_movimientos.at[idx, "Tipo"] = e_tipo
+                        st.session_state.df_movimientos.at[idx, "Categoria"] = e_categoria
+                        st.session_state.df_movimientos.at[idx, "Cuenta"] = e_cuenta
+                        st.session_state.df_movimientos.at[idx, "Grupo"] = e_grupo
+                        st.session_state.df_movimientos.at[idx, "Monto_VES"] = e_monto_ves
+                        st.session_state.df_movimientos.at[idx, "Tasa_Usada"] = tasa_edit
+                        st.session_state.df_movimientos.at[idx, "Monto_USD"] = round(e_monto_usd, 2)
+                        st.session_state.df_movimientos.at[idx, "Detalle"] = e_detalle
+
+                        guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
+                        st.success("¡Registro actualizado exitosamente!")
+                        st.rerun()
+
+                with col_btn2:
+                    if st.button("🗑️ Eliminar Movimiento", type="secondary"):
+                        st.session_state.df_movimientos = st.session_state.df_movimientos.drop(idx).reset_index(drop=True)
+                        guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
+                        st.success("¡Registro eliminado correctamente!")
+                        st.rerun()
+
+        else:
+            st.info("No hay movimientos para editar o eliminar.")
 
     st.divider()
     st.subheader("Historial Completo de Movimientos")
@@ -310,7 +414,6 @@ elif opcion_menu == OPC_CARGAR:
             else:
                 df_cargado = pd.read_excel(archivo)
             
-            # Limpiar filas completamente vacías pero conservar toda la información
             df_cargado = df_cargado.dropna(how="all")
             
             st.write(f"📋 **Vista previa de todas las filas cargadas ({len(df_cargado)} filas encontradas):**")
