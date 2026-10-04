@@ -40,11 +40,13 @@ def cargar_datos():
 
 df_movimientos, df_estimaciones, df_inversiones, lista_grupos, lista_cuentas = cargar_datos()
 
-# Tasas de cambio en línea
+# Función para obtener tasas en tiempo real mediante API
 @st.cache_data(ttl=300)
 def obtener_tasas():
     tasa_bcv = 36.5
     tasa_paralelo = 36.5
+    
+    # Consulta Tasa BCV y Paralelo desde API
     try:
         res_bcv = requests.get("https://dolarapi.com/v1/dolares/oficial", timeout=5)
         if res_bcv.status_code == 200:
@@ -65,8 +67,25 @@ tasa_bcv, tasa_paralelo = obtener_tasas()
 
 # BARRA LATERAL (MENU IZQUIERDO)
 st.sidebar.title("📌 App Sara Menu")
-st.sidebar.caption(f"Tasa BCV: **{tasa_bcv:.2f} VES**")
-st.sidebar.caption(f"Tasa Paralela: **{tasa_paralelo:.2f} VES**")
+
+# Selector dinámico de tasa
+tipo_tasa = st.sidebar.radio("Tasa activa para cálculo:", ["BCV Oficial", "Paralelo", "Manual"])
+
+if tipo_tasa == "BCV Oficial":
+    tasa_activa = tasa_bcv
+elif tipo_tasa == "Paralelo":
+    tasa_activa = tasa_paralelo
+else:
+    tasa_activa = st.sidebar.number_input("Tasa personalizada (VES/USD)", min_value=1.0, value=tasa_bcv, step=0.1)
+
+st.sidebar.caption(f"💵 Tasa BCV: **{tasa_bcv:.2f} VES**")
+st.sidebar.caption(f"📈 Tasa Paralela: **{tasa_paralelo:.2f} VES**")
+st.sidebar.caption(f"⚡ Tasa Activa: **{tasa_activa:.2f} VES**")
+
+if st.sidebar.button("🔄 Actualizar Tasas"):
+    st.cache_data.clear()
+    st.rerun()
+
 st.sidebar.divider()
 
 opcion_menu = st.sidebar.radio(
@@ -88,11 +107,13 @@ st.title("📊 App Sara - Gestión Financiera Integrada")
 if opcion_menu == "🏛️ Saldos & Cuentas":
     st.subheader("Saldos Disponibles por Cuenta / Banco")
     
-    col_t1, col_t2 = st.columns(2)
+    col_t1, col_t2, col_t3 = st.columns(3)
     with col_t1:
         st.metric("💵 Tasa BCV Oficial", f"{tasa_bcv:.2f} VES/USD")
     with col_t2:
-        st.metric("📈 Tasa Paralela / Mercado", f"{tasa_paralelo:.2f} VES/USD")
+        st.metric("📈 Tasa Paralela", f"{tasa_paralelo:.2f} VES/USD")
+    with col_t3:
+        st.metric("⚡ Tasa Activa Aplicada", f"{tasa_activa:.2f} VES/USD")
     st.divider()
 
     if not df_movimientos.empty and "Cuenta" in df_movimientos.columns:
@@ -101,14 +122,14 @@ if opcion_menu == "🏛️ Saldos & Cuentas":
             ing = df_movimientos[(df_movimientos["Cuenta"] == cta) & (df_movimientos["Tipo"] == "Ingreso")]["Monto_USD"].sum()
             gast = df_movimientos[(df_movimientos["Cuenta"] == cta) & (df_movimientos["Tipo"] == "Gasto")]["Monto_USD"].sum()
             saldo_usd = ing - gast
-            saldo_ves = saldo_usd * tasa_bcv
+            saldo_ves = saldo_usd * tasa_activa
             saldos.append({"Cuenta": cta, "Saldo ($ USD)": saldo_usd, "Saldo (VES)": saldo_ves})
         
         df_saldos = pd.DataFrame(saldos)
         st.dataframe(df_saldos, use_container_width=True)
         
         total_usd = df_saldos["Saldo ($ USD)"].sum()
-        st.subheader(f"💰 Saldo Total Consolidado: **${total_usd:,.2f} USD** / **{total_usd * tasa_bcv:,.2f} VES**")
+        st.subheader(f"💰 Saldo Total Consolidado: **${total_usd:,.2f} USD** / **{total_usd * tasa_activa:,.2f} VES**")
     else:
         st.info("Registra tu primer movimiento asociando una cuenta para calcular los saldos automáticos.")
 
@@ -124,8 +145,8 @@ elif opcion_menu == "📝 Registrar Movimiento":
     with col2:
         grupo = st.selectbox("Grupo", lista_grupos)
         monto_usd = st.number_input("Monto ($ USD)", min_value=0.0, step=1.0)
-        monto_ves = monto_usd * tasa_bcv
-        st.info(f"Equivalente a Tasa Oficial: **{monto_ves:,.2f} VES**")
+        monto_ves = monto_usd * tasa_activa
+        st.info(f"Equivalente a Tasa Activa ({tasa_activa:.2f}): **{monto_ves:,.2f} VES**")
         detalle = st.text_input("Detalle / Observación")
 
     if st.button("Guardar Movimiento", type="primary"):
