@@ -111,10 +111,15 @@ def inicializar_estado():
 
 inicializar_estado()
 
-# Guardado en Google Sheets
+# Guardado seguro en Google Sheets con diagnóstico de errores
 def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
     try:
         df_padded = df_data.copy()
+        
+        # Convertir a formato texto limpio para evitar errores de tipo en Google Sheets
+        for col in df_padded.columns:
+            df_padded[col] = df_padded[col].fillna("").astype(str)
+
         if len(df_padded) < min_rows:
             rows_to_add = min_rows - len(df_padded)
             empty_rows = pd.DataFrame({col: [""] * rows_to_add for col in df_padded.columns})
@@ -122,8 +127,11 @@ def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
             
         conn.update(worksheet=worksheet_name, data=df_padded)
         st.cache_data.clear()
+        return True
     except Exception as e:
-        st.error(f"Error guardando en Google Sheets: {e}")
+        st.error(f"❌ Error al guardar en la pestaña '{worksheet_name}' de Google Sheets: {e}")
+        st.info("💡 Verifica que tu hoja de Google Sheets esté compartida con rol de Editor con el correo de Service Account.")
+        return False
 
 # Cálculo seguro para sumar Ingresos y Gastos Estimados
 def calcular_total_estimado(df_est, tipo_buscado):
@@ -205,7 +213,7 @@ if st.sidebar.button("🔄 Actualizar Tasas"):
 
 st.sidebar.divider()
 
-OPC_SALDOS = "🏛️️ Saldos & Cuentas"
+OPC_SALDOS = "🏛️ Saldos & Cuentas"
 OPC_REGISTRAR = "📝 Registrar / Editar Movimiento"
 OPC_INVERSIONES = "📈 Portafolio de Inversiones"
 OPC_PRESUPUESTO = "🎯 Presupuesto vs Real"
@@ -241,7 +249,7 @@ if opcion_menu == OPC_SALDOS:
         st.metric("⚡ Tasa Activa Actual", f"{tasa_activa:.2f} VES/USD")
     st.divider()
 
-    tab_saldos1, tab_saldos2 = st.tabs(["📊 Consolidated Account Balances", "⚙️️ Configurar Saldos Iniciales"])
+    tab_saldos1, tab_saldos2 = st.tabs(["📊 Saldos Consolidados", "⚙️ Configurar Saldos Iniciales"])
 
     df_mov = st.session_state.df_movimientos
     df_si = st.session_state.df_saldos_iniciales
@@ -249,7 +257,6 @@ if opcion_menu == OPC_SALDOS:
     with tab_saldos1:
         saldos = []
         for cta in st.session_state.lista_cuentas:
-            # Obtener saldos iniciales de la cuenta
             s_init_ves = 0.0
             s_init_usd = 0.0
             if not df_si.empty and "Cuenta" in df_si.columns:
@@ -258,7 +265,6 @@ if opcion_menu == OPC_SALDOS:
                     s_init_ves = pd.to_numeric(match["Saldo_Inicial_VES"].iloc[0], errors="coerce") or 0.0
                     s_init_usd = pd.to_numeric(match["Saldo_Inicial_USD"].iloc[0], errors="coerce") or 0.0
 
-            # Calcular ingresos y gastos registrados
             ing_ves = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_VES"], errors="coerce").sum() if not df_mov.empty else 0.0
             gast_ves = pd.to_numeric(df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_VES"], errors="coerce").sum() if not df_mov.empty else 0.0
             
@@ -298,12 +304,10 @@ if opcion_menu == OPC_SALDOS:
 
         if st.button("Guardar Saldo Inicial", type="primary"):
             if not df_si.empty and "Cuenta" in df_si.columns and cta_sel_si in df_si["Cuenta"].values:
-                # Actualizar existente
                 idx = df_si.index[df_si["Cuenta"] == cta_sel_si][0]
                 st.session_state.df_saldos_iniciales.at[idx, "Saldo_Inicial_VES"] = init_ves
                 st.session_state.df_saldos_iniciales.at[idx, "Saldo_Inicial_USD"] = init_usd
             else:
-                # Crear nuevo registro
                 nuevo_si = pd.DataFrame([{
                     "Cuenta": cta_sel_si,
                     "Saldo_Inicial_VES": init_ves,
@@ -311,9 +315,9 @@ if opcion_menu == OPC_SALDOS:
                 }])
                 st.session_state.df_saldos_iniciales = pd.concat([st.session_state.df_saldos_iniciales, nuevo_si], ignore_index=True)
 
-            guardar_en_sheets("Saldos_Iniciales", st.session_state.df_saldos_iniciales)
-            st.success(f"¡Saldo inicial guardado para '{cta_sel_si}'!")
-            st.rerun()
+            if guardar_en_sheets("Saldos_Iniciales", st.session_state.df_saldos_iniciales):
+                st.success(f"¡Saldo inicial guardado para '{cta_sel_si}'!")
+                st.rerun()
 
 # 2. REGISTRAR / EDITAR / ELIMINAR MOVIMIENTOS
 elif opcion_menu == OPC_REGISTRAR:
@@ -356,9 +360,9 @@ elif opcion_menu == OPC_REGISTRAR:
             }])
             
             st.session_state.df_movimientos = pd.concat([st.session_state.df_movimientos, nuevo], ignore_index=True)
-            guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
-            st.success(f"¡Movimiento registrado con éxito! Guardado en USD: ${monto_usd:,.2f} USD.")
-            st.rerun()
+            if guardar_en_sheets("Movimientos", st.session_state.df_movimientos):
+                st.success(f"¡Movimiento registrado con éxito! Guardado en USD: ${monto_usd:,.2f} USD.")
+                st.rerun()
 
     with tab2:
         st.subheader("Gestión y Modificación de Movimientos")
@@ -413,16 +417,16 @@ elif opcion_menu == OPC_REGISTRAR:
                         st.session_state.df_movimientos.at[idx, "Monto_USD"] = round(e_monto_usd, 2)
                         st.session_state.df_movimientos.at[idx, "Detalle"] = e_detalle
 
-                        guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
-                        st.success("¡Registro actualizado exitosamente!")
-                        st.rerun()
+                        if guardar_en_sheets("Movimientos", st.session_state.df_movimientos):
+                            st.success("¡Registro actualizado exitosamente!")
+                            st.rerun()
 
                 with col_btn2:
                     if st.button("🗑️ Eliminar Movimiento", type="secondary"):
                         st.session_state.df_movimientos = st.session_state.df_movimientos.drop(idx).reset_index(drop=True)
-                        guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
-                        st.success("¡Registro eliminado correctamente!")
-                        st.rerun()
+                        if guardar_en_sheets("Movimientos", st.session_state.df_movimientos):
+                            st.success("¡Registro eliminado correctamente!")
+                            st.rerun()
         else:
             st.info("No hay movimientos para editar o eliminar.")
 
@@ -457,9 +461,9 @@ elif opcion_menu == OPC_INVERSIONES:
                 "Detalle": det_inv
             }])
             st.session_state.df_inversiones = pd.concat([st.session_state.df_inversiones, nueva_inv], ignore_index=True)
-            guardar_en_sheets("Inversiones", st.session_state.df_inversiones)
-            st.success("¡Posición de inversión registrada!")
-            st.rerun()
+            if guardar_en_sheets("Inversiones", st.session_state.df_inversiones):
+                st.success("¡Posición de inversión registrada!")
+                st.rerun()
 
     st.divider()
     st.subheader("Resumen de Portafolio de Inversiones")
@@ -537,9 +541,9 @@ elif opcion_menu == OPC_PRESUPUESTO:
             
             st.session_state.df_estimaciones = pd.concat([st.session_state.df_estimaciones, nueva_est], ignore_index=True)
             st.session_state.df_estimaciones = estandarizar_df_estimaciones(st.session_state.df_estimaciones)
-            guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones)
-            st.success(f"¡Estimación de {est_tipo} por ${est_monto:,.2f} USD agregada exitosamente!")
-            st.rerun()
+            if guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones):
+                st.success(f"¡Estimación de {est_tipo} por ${est_monto:,.2f} USD agregada exitosamente!")
+                st.rerun()
 
     # TAB 3: VER TODAS LAS ESTIMACIONES Y ELIMINAR O EDITAR
     with tab_comp3:
@@ -554,9 +558,9 @@ elif opcion_menu == OPC_PRESUPUESTO:
                 id_est_del = int(est_sel.split(" - ")[0])
                 st.session_state.df_estimaciones = df_est[df_est["ID"] != id_est_del].reset_index(drop=True)
                 st.session_state.df_estimaciones = estandarizar_df_estimaciones(st.session_state.df_estimaciones)
-                guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones)
-                st.success("¡Estimación eliminada con éxito!")
-                st.rerun()
+                if guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones):
+                    st.success("¡Estimación eliminada con éxito!")
+                    st.rerun()
         else:
             st.info("No hay presupuestos estimados registrados aún.")
 
@@ -581,9 +585,9 @@ elif opcion_menu == OPC_CARGAR:
             
             if st.button("Guardar Presupuesto Completo en Google Sheets", type="primary"):
                 st.session_state.df_estimaciones = df_cargado
-                guardar_en_sheets("Estimaciones", df_cargado, min_rows=max(100, len(df_cargado)))
-                st.success(f"¡Se han importado y guardado las {len(df_cargado)} filas de tu presupuesto exitosamente!")
-                st.rerun()
+                if guardar_en_sheets("Estimaciones", df_cargado, min_rows=max(100, len(df_cargado))):
+                    st.success(f"¡Se han importado y guardado las {len(df_cargado)} filas de tu presupuesto exitosamente!")
+                    st.rerun()
         except Exception as e:
             st.error(f"Error al leer el archivo: {e}")
 
@@ -614,9 +618,9 @@ elif opcion_menu == OPC_CONFIGURACION:
         if st.button("➕ Agregar Grupo", key="btn_add_grupo"):
             if nuevo_grupo and nuevo_grupo not in st.session_state.lista_grupos:
                 st.session_state.lista_grupos.append(nuevo_grupo)
-                guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": st.session_state.lista_grupos}))
-                st.success(f"Grupo '{nuevo_grupo}' agregado con éxito.")
-                st.rerun()
+                if guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": st.session_state.lista_grupos})):
+                    st.success(f"Grupo '{nuevo_grupo}' agregado con éxito.")
+                    st.rerun()
 
         st.divider()
         if st.session_state.lista_grupos:
@@ -624,9 +628,9 @@ elif opcion_menu == OPC_CONFIGURACION:
             if st.button("🗑️ Eliminar Grupo", key="btn_del_grupo"):
                 if grupo_eliminar in st.session_state.lista_grupos:
                     st.session_state.lista_grupos.remove(grupo_eliminar)
-                    guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": st.session_state.lista_grupos}))
-                    st.success(f"Grupo '{grupo_eliminar}' eliminado.")
-                    st.rerun()
+                    if guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": st.session_state.lista_grupos})):
+                        st.success(f"Grupo '{grupo_eliminar}' eliminado.")
+                        st.rerun()
 
     with col_g2:
         st.markdown("### 🏦 Gestión de Cuentas / Bancos")
@@ -634,9 +638,9 @@ elif opcion_menu == OPC_CONFIGURACION:
         if st.button("➕ Agregar Cuenta", key="btn_add_cuenta"):
             if nueva_cuenta and nueva_cuenta not in st.session_state.lista_cuentas:
                 st.session_state.lista_cuentas.append(nueva_cuenta)
-                guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": st.session_state.lista_cuentas}))
-                st.success(f"Cuenta '{nueva_cuenta}' agregada con éxito.")
-                st.rerun()
+                if guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": st.session_state.lista_cuentas})):
+                    st.success(f"Cuenta '{nueva_cuenta}' agregada con éxito.")
+                    st.rerun()
 
         st.divider()
         if st.session_state.lista_cuentas:
@@ -644,6 +648,6 @@ elif opcion_menu == OPC_CONFIGURACION:
             if st.button("🗑️ Eliminar Cuenta", key="btn_del_cuenta"):
                 if cuenta_eliminar in st.session_state.lista_cuentas:
                     st.session_state.lista_cuentas.remove(cuenta_eliminar)
-                    guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": st.session_state.lista_cuentas}))
-                    st.success(f"Cuenta '{cuenta_eliminar}' eliminada.")
-                    st.rerun()
+                    if guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": st.session_state.lista_cuentas})):
+                        st.success(f"Cuenta '{cuenta_eliminar}' eliminada.")
+                        st.rerun()
