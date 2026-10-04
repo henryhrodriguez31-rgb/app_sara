@@ -40,12 +40,24 @@ def cargar_datos():
 
 df_movimientos, df_estimaciones, df_inversiones, lista_grupos, lista_cuentas = cargar_datos()
 
-# Función auxiliar para guardar DataFrames en Google Sheets sin UnsupportedOperationError
+# Función para guardar en Google Sheets limpiando primero la pestaña
 def guardar_en_sheets(worksheet_name, df_data):
     try:
+        # Intentar limpiar el área de trabajo antes de escribir
+        client = conn._instance
+        try:
+            ws = client.spreadsheet.worksheet(worksheet_name)
+            ws.clear()
+        except Exception:
+            pass
         conn.update(worksheet=worksheet_name, data=df_data)
     except Exception:
-        conn.create(worksheet=worksheet_name, data=df_data)
+        # Si la pestaña no existía, la crea directamente
+        try:
+            conn.create(worksheet=worksheet_name, data=df_data)
+        except Exception:
+            # Fallback seguro
+            conn.update(worksheet=worksheet_name, data=df_data)
 
 # Obtener tasas dinámicas con servidores de respaldo
 @st.cache_data(ttl=300)
