@@ -20,6 +20,11 @@ def cargar_datos():
         df_est = pd.DataFrame(columns=["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
 
     try:
+        df_inv = conn.read(worksheet="Inversiones", ttl=0)
+    except Exception:
+        df_inv = pd.DataFrame(columns=["Fecha", "Plataforma", "Activo", "Tipo_Operacion", "Monto_Invertido_USD", "Valor_Actual_USD", "Detalle"])
+
+    try:
         df_grup = conn.read(worksheet="Grupos", ttl=0)
         grupos = df_grup["Nombre_Grupo"].dropna().tolist()
     except Exception:
@@ -29,11 +34,11 @@ def cargar_datos():
         df_cta = conn.read(worksheet="Cuentas", ttl=0)
         cuentas = df_cta["Nombre_Cuenta"].dropna().tolist()
     except Exception:
-        cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)"]
+        cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
 
-    return df_mov, df_est, grupos, cuentas
+    return df_mov, df_est, df_inv, grupos, cuentas
 
-df_movimientos, df_estimaciones, lista_grupos, lista_cuentas = cargar_datos()
+df_movimientos, df_estimaciones, df_inversiones, lista_grupos, lista_cuentas = cargar_datos()
 
 # Tasas de cambio en línea
 @st.cache_data(ttl=300)
@@ -58,29 +63,38 @@ def obtener_tasas():
 
 tasa_bcv, tasa_paralelo = obtener_tasas()
 
+# BARRA LATERAL (MENU IZQUIERDO)
+st.sidebar.title("📌 App Sara Menu")
+st.sidebar.caption(f"Tasa BCV: **{tasa_bcv:.2f} VES**")
+st.sidebar.caption(f"Tasa Paralela: **{tasa_paralelo:.2f} VES**")
+st.sidebar.divider()
+
+opcion_menu = st.sidebar.radio(
+    "Selecciona una opción:",
+    [
+        "🏛️ Saldos & Cuentas",
+        "📝 Registrar Movimiento",
+        "📈 Portafolio de Inversiones",
+        "🎯 Presupuesto vs Real",
+        "📥 Cargar Presupuesto (Excel/CSV)",
+        "📊 Resumen y Gráficos",
+        "⚙️ Gestión de Grupos y Cuentas"
+    ]
+)
+
 st.title("📊 App Sara - Gestión Financiera Integrada")
 
-# Encabezado de Tasas
-col_t1, col_t2 = st.columns(2)
-with col_t1:
-    st.metric("💵 Tasa BCV Oficial", f"{tasa_bcv:.2f} VES/USD")
-with col_t2:
-    st.metric("📈 Tasa Paralela / Mercado", f"{tasa_paralelo:.2f} VES/USD")
+# 1. SALDOS & CUENTAS
+if opcion_menu == "🏛️ Saldos & Cuentas":
+    st.subheader("Saldos Disponibles por Cuenta / Banco")
+    
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        st.metric("💵 Tasa BCV Oficial", f"{tasa_bcv:.2f} VES/USD")
+    with col_t2:
+        st.metric("📈 Tasa Paralela / Mercado", f"{tasa_paralelo:.2f} VES/USD")
+    st.divider()
 
-st.divider()
-
-tabs = st.tabs([
-    "🏛️ Saldos & Cuentas", 
-    "📥 Cargar Presupuesto (Excel/CSV)", 
-    "📝 Registrar Movimiento", 
-    "🎯 Presupuesto vs Real", 
-    "📊 Resumen y Gráficos", 
-    "⚙️ Gestión de Grupos y Cuentas"
-])
-
-# TAB 1: SALDOS DE BANCOS
-with tabs[0]:
-    st.subheader("Saldos Disponibles por Cuenta")
     if not df_movimientos.empty and "Cuenta" in df_movimientos.columns:
         saldos = []
         for cta in lista_cuentas:
@@ -96,34 +110,10 @@ with tabs[0]:
         total_usd = df_saldos["Saldo ($ USD)"].sum()
         st.subheader(f"💰 Saldo Total Consolidado: **${total_usd:,.2f} USD** / **{total_usd * tasa_bcv:,.2f} VES**")
     else:
-        st.info("Registra tu primer movimiento asociando una cuenta para ver los saldos automáticos.")
+        st.info("Registra tu primer movimiento asociando una cuenta para calcular los saldos automáticos.")
 
-# TAB 2: CARGAR PRESUPUESTO (EXCEL / CSV)
-with tabs[1]:
-    st.subheader("Importar Presupuesto Estimado por Archivo")
-    archivo = st.file_uploader("Sube tu archivo de presupuesto (Excel o CSV)", type=["xlsx", "xls", "csv"])
-    
-    st.caption("El archivo debe contener las columnas: **Tipo**, **Categoria**, **Grupo**, **Monto_Estimado_USD**")
-    
-    if archivo is not None:
-        try:
-            if archivo.name.endswith(".csv"):
-                df_cargado = pd.read_csv(archivo)
-            else:
-                df_cargado = pd.read_excel(archivo)
-                
-            st.write("Vista previa del archivo cargado:")
-            st.dataframe(df_cargado.head())
-            
-            if st.button("Guardar Presupuesto en Google Sheets", type="primary"):
-                conn.update(worksheet="Estimaciones", data=df_cargado)
-                st.success("¡Presupuesto importado y guardado exitosamente!")
-                st.rerun()
-        except Exception as e:
-            st.error(f"Error al leer el archivo: {e}")
-
-# TAB 3: REGISTRAR MOVIMIENTO
-with tabs[2]:
+# 2. REGISTRAR MOVIMIENTO
+elif opcion_menu == "📝 Registrar Movimiento":
     st.subheader("Nuevo Registro Diario")
     col1, col2 = st.columns(2)
     with col1:
@@ -158,8 +148,58 @@ with tabs[2]:
     st.subheader("Historial Completo de Movimientos")
     st.dataframe(df_movimientos, use_container_width=True)
 
-# TAB 4: PRESUPUESTO VS REAL
-with tabs[3]:
+# 3. PORTAFOLIO DE INVERSIONES
+elif opcion_menu == "📈 Portafolio de Inversiones":
+    st.subheader("Seguimiento de Inversiones (Quantfury & Binance)")
+    
+    with st.expander("➕ Registrar Nueva Inversión / Posición"):
+        col_i1, col_i2 = st.columns(2)
+        with col_i1:
+            fecha_inv = st.date_input("Fecha de Operación")
+            plataforma = st.selectbox("Plataforma", ["Quantfury", "Binance Futuros", "Binance Spot", "Otro"])
+            activo = st.text_input("Activo / Ticker", value="SPY (S&P 500)")
+            tipo_op = st.selectbox("Tipo de Operación", ["Compra (Long)", "Venta (Short)", "Hold / Staking"])
+        with col_i2:
+            monto_inv = st.number_input("Monto Invertido ($ USD)", min_value=0.0, step=10.0)
+            valor_act = st.number_input("Valor Actual / Valor de Cierre ($ USD)", min_value=0.0, value=monto_inv, step=10.0)
+            det_inv = st.text_input("Estrategia / Notas")
+
+        if st.button("Guardar Inversión", type="primary"):
+            nueva_inv = pd.DataFrame([{
+                "Fecha": str(fecha_inv),
+                "Plataforma": plataforma,
+                "Activo": activo,
+                "Tipo_Operacion": tipo_op,
+                "Monto_Invertido_USD": monto_inv,
+                "Valor_Actual_USD": valor_act,
+                "Detalle": det_inv
+            }])
+            df_inv_actualizado = pd.concat([df_inversiones, nueva_inv], ignore_index=True)
+            conn.update(worksheet="Inversiones", data=df_inv_actualizado)
+            st.success("¡Posición de inversión registrada!")
+            st.rerun()
+
+    st.divider()
+    st.subheader("Resumen de Portafolio de Inversiones")
+    
+    if not df_inversiones.empty:
+        df_inversiones["Rendimiento ($)"] = df_inversiones["Valor_Actual_USD"] - df_inversiones["Monto_Invertido_USD"]
+        
+        col_m1, col_m2, col_m3 = st.columns(3)
+        total_inv = df_inversiones["Monto_Invertido_USD"].sum()
+        total_val = df_inversiones["Valor_Actual_USD"].sum()
+        total_pnl = total_val - total_inv
+        
+        col_m1.metric("Capital Invertido", f"${total_inv:,.2f}")
+        col_m2.metric("Valor Actual del Portafolio", f"${total_val:,.2f}")
+        col_m3.metric("Ganancia / Pérdida Total", f"${total_pnl:,.2f}", delta=f"${total_pnl:,.2f}")
+        
+        st.dataframe(df_inversiones, use_container_width=True)
+    else:
+        st.info("Aún no tienes posiciones de inversión registradas.")
+
+# 4. PRESUPUESTO VS REAL
+elif opcion_menu == "🎯 Presupuesto vs Real":
     st.subheader("Comparativo de Desempeño Financiero")
     
     col_a, col_b = st.columns(2)
@@ -177,8 +217,32 @@ with tabs[3]:
         st.metric("Gastos Estimados", f"${gast_est:,.2f}")
         st.metric("Gastos Reales", f"${gast_real:,.2f}", delta=f"${gast_est - gast_real:,.2f}")
 
-# TAB 5: RESUMEN Y GRÁFICOS
-with tabs[4]:
+# 5. CARGAR PRESUPUESTO
+elif opcion_menu == "📥 Cargar Presupuesto (Excel/CSV)":
+    st.subheader("Importar Presupuesto Estimado por Archivo")
+    archivo = st.file_uploader("Sube tu archivo de presupuesto (Excel o CSV)", type=["xlsx", "xls", "csv"])
+    
+    st.caption("El archivo debe contener las columnas: **Tipo**, **Categoria**, **Grupo**, **Monto_Estimado_USD**")
+    
+    if archivo is not None:
+        try:
+            if archivo.name.endswith(".csv"):
+                df_cargado = pd.read_csv(archivo)
+            else:
+                df_cargado = pd.read_excel(archivo)
+                
+            st.write("Vista previa del archivo cargado:")
+            st.dataframe(df_cargado.head())
+            
+            if st.button("Guardar Presupuesto en Google Sheets", type="primary"):
+                conn.update(worksheet="Estimaciones", data=df_cargado)
+                st.success("¡Presupuesto importado y guardado exitosamente!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Error al leer el archivo: {e}")
+
+# 6. RESUMEN Y GRÁFICOS
+elif opcion_menu == "📊 Resumen y Gráficos":
     st.subheader("Evolución y Distribución de Gastos")
     if not df_movimientos.empty:
         df_gastos = df_movimientos[df_movimientos["Tipo"] == "Gasto"]
@@ -190,8 +254,8 @@ with tabs[4]:
     else:
         st.info("Aún no existen registros para mostrar métricas.")
 
-# TAB 6: GESTIÓN DE GRUPOS Y CUENTAS
-with tabs[5]:
+# 7. GESTIÓN DE GRUPOS Y CUENTAS
+elif opcion_menu == "⚙️ Gestión de Grupos y Cuentas":
     st.subheader("Configuración de Parámetros")
     
     col_g1, col_g2 = st.columns(2)
