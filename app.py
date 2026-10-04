@@ -8,51 +8,54 @@ st.set_page_config(page_title="App Sara", page_icon="📊", layout="wide")
 # Conexión a Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def cargar_datos():
-    try:
-        df_mov = conn.read(worksheet="Movimientos", ttl=0)
-        df_mov = df_mov.dropna(how="all")
-    except Exception:
-        df_mov = pd.DataFrame(columns=["Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_USD", "Monto_VES", "Detalle"])
+# Cargar datos e inicializar en st.session_state
+def inicializar_estado():
+    if "df_movimientos" not in st.session_state:
+        try:
+            df_mov = conn.read(worksheet="Movimientos", ttl=0)
+            st.session_state.df_movimientos = df_mov.dropna(how="all")
+        except Exception:
+            st.session_state.df_movimientos = pd.DataFrame(columns=["Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_USD", "Monto_VES", "Detalle"])
 
-    try:
-        df_est = conn.read(worksheet="Estimaciones", ttl=0)
-        df_est = df_est.dropna(how="all")
-    except Exception:
-        df_est = pd.DataFrame(columns=["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
+    if "df_estimaciones" not in st.session_state:
+        try:
+            df_est = conn.read(worksheet="Estimaciones", ttl=0)
+            st.session_state.df_estimaciones = df_est.dropna(how="all")
+        except Exception:
+            st.session_state.df_estimaciones = pd.DataFrame(columns=["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
 
-    try:
-        df_inv = conn.read(worksheet="Inversiones", ttl=0)
-        df_inv = df_inv.dropna(how="all")
-    except Exception:
-        df_inv = pd.DataFrame(columns=["Fecha", "Plataforma", "Activo", "Tipo_Operacion", "Monto_Invertido_USD", "Valor_Actual_USD", "Detalle"])
+    if "df_inversiones" not in st.session_state:
+        try:
+            df_inv = conn.read(worksheet="Inversiones", ttl=0)
+            st.session_state.df_inversiones = df_inv.dropna(how="all")
+        except Exception:
+            st.session_state.df_inversiones = pd.DataFrame(columns=["Fecha", "Plataforma", "Activo", "Tipo_Operacion", "Monto_Invertido_USD", "Valor_Actual_USD", "Detalle"])
 
-    try:
-        df_grup = conn.read(worksheet="Grupos", ttl=0)
-        grupos = df_grup["Nombre_Grupo"].dropna().astype(str).str.strip().tolist()
-        grupos = [g for g in grupos if g != ""]
-        if not grupos:
-            grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
-    except Exception:
-        grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
+    if "lista_grupos" not in st.session_state:
+        try:
+            df_grup = conn.read(worksheet="Grupos", ttl=0)
+            grupos = df_grup["Nombre_Grupo"].dropna().astype(str).str.strip().tolist()
+            st.session_state.lista_grupos = [g for g in grupos if g and g != "nan"]
+            if not st.session_state.lista_grupos:
+                st.session_state.lista_grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
+        except Exception:
+            st.session_state.lista_grupos = ["Personal", "Hogar", "Inversión", "Trabajo"]
 
-    try:
-        df_cta = conn.read(worksheet="Cuentas", ttl=0)
-        cuentas = df_cta["Nombre_Cuenta"].dropna().astype(str).str.strip().tolist()
-        cuentas = [c for c in cuentas if c != ""]
-        if not cuentas:
-            cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
-    except Exception:
-        cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
+    if "lista_cuentas" not in st.session_state:
+        try:
+            df_cta = conn.read(worksheet="Cuentas", ttl=0)
+            cuentas = df_cta["Nombre_Cuenta"].dropna().astype(str).str.strip().tolist()
+            st.session_state.lista_cuentas = [c for c in cuentas if c and c != "nan"]
+            if not st.session_state.lista_cuentas:
+                st.session_state.lista_cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
+        except Exception:
+            st.session_state.lista_cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)"]
 
-    return df_mov, df_est, df_inv, grupos, cuentas
+inicializar_estado()
 
-df_movimientos, df_estimaciones, df_inversiones, lista_grupos, lista_cuentas = cargar_datos()
-
-# Función de guardado seguro con Relleno Fijo de Filas (Padding)
+# Guardado con relleno uniforme
 def guardar_en_sheets(worksheet_name, df_data, target_rows=100):
     try:
-        # Asegurarse de mantener una longitud constante para evitar UnsupportedOperationError
         df_padded = df_data.copy()
         if len(df_padded) < target_rows:
             rows_to_add = target_rows - len(df_padded)
@@ -60,16 +63,16 @@ def guardar_en_sheets(worksheet_name, df_data, target_rows=100):
             df_padded = pd.concat([df_padded, empty_rows], ignore_index=True)
             
         conn.update(worksheet=worksheet_name, data=df_padded)
+        st.cache_data.clear()
     except Exception as e:
-        st.error(f"Error al guardar en Google Sheets: {e}")
+        st.error(f"Error guardando en Google Sheets: {e}")
 
-# Obtener tasas dinámicas con servidores de respaldo
+# Obtener tasas de cambio
 @st.cache_data(ttl=300)
 def obtener_tasas():
     tasa_bcv = 866.56
     tasa_paralelo = 974.38
     
-    # Fuente 1: pyDolarVenezuela
     try:
         res = requests.get("https://pydolarvenezuela-api.vercel.app/api/v1/dollar", timeout=5)
         if res.status_code == 200:
@@ -78,24 +81,9 @@ def obtener_tasas():
                 tasa_bcv = float(data["monedas"]["dollar"]["price"])
             elif "bcv" in data:
                 tasa_bcv = float(data["bcv"]["price"])
-            
             if "enparalelovzla" in data:
                 tasa_paralelo = float(data["enparalelovzla"]["price"])
             return tasa_bcv, tasa_paralelo
-    except Exception:
-        pass
-
-    # Fuente 2: DolarApi
-    try:
-        res_bcv = requests.get("https://ve.dolarapi.com/v1/dolares/oficial", timeout=5)
-        if res_bcv.status_code == 200:
-            tasa_bcv = float(res_bcv.json()["promedio"])
-        
-        res_par = requests.get("https://ve.dolarapi.com/v1/dolares/paralelo", timeout=5)
-        if res_par.status_code == 200:
-            tasa_paralelo = float(res_par.json()["promedio"])
-            
-        return tasa_bcv, tasa_paralelo
     except Exception:
         pass
 
@@ -161,11 +149,12 @@ if opcion_menu == OPC_SALDOS:
         st.metric("⚡ Tasa Activa Aplicada", f"{tasa_activa:.2f} VES/USD")
     st.divider()
 
-    if not df_movimientos.empty and "Cuenta" in df_movimientos.columns:
+    df_mov = st.session_state.df_movimientos
+    if not df_mov.empty and "Cuenta" in df_mov.columns:
         saldos = []
-        for cta in lista_cuentas:
-            ing = df_movimientos[(df_movimientos["Cuenta"] == cta) & (df_movimientos["Tipo"] == "Ingreso")]["Monto_USD"].sum()
-            gast = df_movimientos[(df_movimientos["Cuenta"] == cta) & (df_movimientos["Tipo"] == "Gasto")]["Monto_USD"].sum()
+        for cta in st.session_state.lista_cuentas:
+            ing = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Ingreso")]["Monto_USD"].sum()
+            gast = df_mov[(df_mov["Cuenta"] == cta) & (df_mov["Tipo"] == "Gasto")]["Monto_USD"].sum()
             saldo_usd = ing - gast
             saldo_ves = saldo_usd * tasa_activa
             saldos.append({"Cuenta": cta, "Saldo ($ USD)": saldo_usd, "Saldo (VES)": saldo_ves})
@@ -186,9 +175,9 @@ elif opcion_menu == OPC_REGISTRAR:
         fecha = st.date_input("Fecha")
         tipo = st.selectbox("Tipo de Movimiento", ["Gasto", "Ingreso"])
         categoria = st.text_input("Categoría", value="Alimentación" if tipo == "Gasto" else "Sueldo")
-        cuenta = st.selectbox("Cuenta / Banco", lista_cuentas)
+        cuenta = st.selectbox("Cuenta / Banco", st.session_state.lista_cuentas)
     with col2:
-        grupo = st.selectbox("Grupo", lista_grupos)
+        grupo = st.selectbox("Grupo", st.session_state.lista_grupos)
         monto_usd = st.number_input("Monto ($ USD)", min_value=0.0, step=1.0)
         monto_ves = monto_usd * tasa_activa
         st.info(f"Equivalente a Tasa Activa ({tasa_activa:.2f}): **{monto_ves:,.2f} VES**")
@@ -205,14 +194,14 @@ elif opcion_menu == OPC_REGISTRAR:
             "Monto_VES": monto_ves,
             "Detalle": detalle
         }])
-        df_actualizado = pd.concat([df_movimientos, nuevo], ignore_index=True)
-        guardar_en_sheets("Movimientos", df_actualizado)
+        st.session_state.df_movimientos = pd.concat([st.session_state.df_movimientos, nuevo], ignore_index=True)
+        guardar_en_sheets("Movimientos", st.session_state.df_movimientos)
         st.success("¡Movimiento registrado correctamente!")
         st.rerun()
 
     st.divider()
     st.subheader("Historial Completo de Movimientos")
-    st.dataframe(df_movimientos, use_container_width=True)
+    st.dataframe(st.session_state.df_movimientos, use_container_width=True)
 
 # 3. PORTAFOLIO DE INVERSIONES
 elif opcion_menu == OPC_INVERSIONES:
@@ -240,27 +229,28 @@ elif opcion_menu == OPC_INVERSIONES:
                 "Valor_Actual_USD": valor_act,
                 "Detalle": det_inv
             }])
-            df_inv_actualizado = pd.concat([df_inversiones, nueva_inv], ignore_index=True)
-            guardar_en_sheets("Inversiones", df_inv_actualizado)
+            st.session_state.df_inversiones = pd.concat([st.session_state.df_inversiones, nueva_inv], ignore_index=True)
+            guardar_en_sheets("Inversiones", st.session_state.df_inversiones)
             st.success("¡Posición de inversión registrada!")
             st.rerun()
 
     st.divider()
     st.subheader("Resumen de Portafolio de Inversiones")
     
-    if not df_inversiones.empty:
-        df_inversiones["Rendimiento ($)"] = df_inversiones["Valor_Actual_USD"] - df_inversiones["Monto_Invertido_USD"]
+    df_inv = st.session_state.df_inversiones
+    if not df_inv.empty:
+        df_inv["Rendimiento ($)"] = df_inv["Valor_Actual_USD"] - df_inv["Monto_Invertido_USD"]
         
         col_m1, col_m2, col_m3 = st.columns(3)
-        total_inv = df_inversiones["Monto_Invertido_USD"].sum()
-        total_val = df_inversiones["Valor_Actual_USD"].sum()
+        total_inv = df_inv["Monto_Invertido_USD"].sum()
+        total_val = df_inv["Valor_Actual_USD"].sum()
         total_pnl = total_val - total_inv
         
         col_m1.metric("Capital Invertido", f"${total_inv:,.2f}")
         col_m2.metric("Valor Actual del Portafolio", f"${total_val:,.2f}")
         col_m3.metric("Ganancia / Pérdida Total", f"${total_pnl:,.2f}", delta=f"${total_pnl:,.2f}")
         
-        st.dataframe(df_inversiones, use_container_width=True)
+        st.dataframe(df_inv, use_container_width=True)
     else:
         st.info("Aún no tienes posiciones de inversión registradas.")
 
@@ -268,18 +258,21 @@ elif opcion_menu == OPC_INVERSIONES:
 elif opcion_menu == OPC_PRESUPUESTO:
     st.subheader("Comparativo de Desempeño Financiero")
     
+    df_est = st.session_state.df_estimaciones
+    df_mov = st.session_state.df_movimientos
+
     col_a, col_b = st.columns(2)
     with col_a:
         st.markdown("### 📥 Ingresos")
-        ing_est = df_estimaciones[df_estimaciones["Tipo"] == "Ingreso"]["Monto_Estimado_USD"].sum() if not df_estimaciones.empty else 0.0
-        ing_real = df_movimientos[df_movimientos["Tipo"] == "Ingreso"]["Monto_USD"].sum() if not df_movimientos.empty else 0.0
+        ing_est = df_est[df_est["Tipo"] == "Ingreso"]["Monto_Estimado_USD"].sum() if not df_est.empty else 0.0
+        ing_real = df_mov[df_mov["Tipo"] == "Ingreso"]["Monto_USD"].sum() if not df_mov.empty else 0.0
         st.metric("Ingresos Estimados", f"${ing_est:,.2f}")
         st.metric("Ingresos Reales", f"${ing_real:,.2f}", delta=f"${ing_real - ing_est:,.2f}")
 
     with col_b:
         st.markdown("### 📤 Gastos")
-        gast_est = df_estimaciones[df_estimaciones["Tipo"] == "Gasto"]["Monto_Estimado_USD"].sum() if not df_estimaciones.empty else 0.0
-        gast_real = df_movimientos[df_movimientos["Tipo"] == "Gasto"]["Monto_USD"].sum() if not df_movimientos.empty else 0.0
+        gast_est = df_est[df_est["Tipo"] == "Gasto"]["Monto_Estimado_USD"].sum() if not df_est.empty else 0.0
+        gast_real = df_mov[df_mov["Tipo"] == "Gasto"]["Monto_USD"].sum() if not df_mov.empty else 0.0
         st.metric("Gastos Estimados", f"${gast_est:,.2f}")
         st.metric("Gastos Reales", f"${gast_real:,.2f}", delta=f"${gast_est - gast_real:,.2f}")
 
@@ -301,6 +294,7 @@ elif opcion_menu == OPC_CARGAR:
             st.dataframe(df_cargado.head())
             
             if st.button("Guardar Presupuesto en Google Sheets", type="primary"):
+                st.session_state.df_estimaciones = df_cargado
                 guardar_en_sheets("Estimaciones", df_cargado)
                 st.success("¡Presupuesto importado y guardado exitosamente!")
                 st.rerun()
@@ -310,8 +304,9 @@ elif opcion_menu == OPC_CARGAR:
 # 6. RESUMEN Y GRÁFICOS
 elif opcion_menu == OPC_RESUMEN:
     st.subheader("Evolución y Distribución de Gastos")
-    if not df_movimientos.empty:
-        df_gastos = df_movimientos[df_movimientos["Tipo"] == "Gasto"]
+    df_mov = st.session_state.df_movimientos
+    if not df_mov.empty:
+        df_gastos = df_mov[df_mov["Tipo"] == "Gasto"]
         if not df_gastos.empty:
             df_grp = df_gastos.groupby("Grupo")["Monto_USD"].sum().reset_index()
             st.bar_chart(df_grp.set_index("Grupo"))
@@ -330,19 +325,19 @@ elif opcion_menu == OPC_CONFIGURACION:
         st.markdown("### 📁 Gestión de Grupos")
         nuevo_grupo = st.text_input("Nombre del nuevo grupo", key="txt_nuevo_grupo")
         if st.button("➕ Agregar Grupo", key="btn_add_grupo"):
-            if nuevo_grupo and nuevo_grupo not in lista_grupos:
-                lista_grupos.append(nuevo_grupo)
-                guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": lista_grupos}))
+            if nuevo_grupo and nuevo_grupo not in st.session_state.lista_grupos:
+                st.session_state.lista_grupos.append(nuevo_grupo)
+                guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": st.session_state.lista_grupos}))
                 st.success(f"Grupo '{nuevo_grupo}' agregado con éxito.")
                 st.rerun()
 
         st.divider()
-        if lista_grupos:
-            grupo_eliminar = st.selectbox("Seleccionar grupo a eliminar", lista_grupos, key="sel_del_grupo")
+        if st.session_state.lista_grupos:
+            grupo_eliminar = st.selectbox("Seleccionar grupo a eliminar", st.session_state.lista_grupos, key="sel_del_grupo")
             if st.button("🗑️ Eliminar Grupo", key="btn_del_grupo"):
-                if grupo_eliminar in lista_grupos:
-                    lista_grupos.remove(grupo_eliminar)
-                    guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": lista_grupos}))
+                if grupo_eliminar in st.session_state.lista_grupos:
+                    st.session_state.lista_grupos.remove(grupo_eliminar)
+                    guardar_en_sheets("Grupos", pd.DataFrame({"Nombre_Grupo": st.session_state.lista_grupos}))
                     st.success(f"Grupo '{grupo_eliminar}' eliminado.")
                     st.rerun()
 
@@ -350,18 +345,18 @@ elif opcion_menu == OPC_CONFIGURACION:
         st.markdown("### 🏦 Gestión de Cuentas / Bancos")
         nueva_cuenta = st.text_input("Nombre del nuevo banco/cuenta", key="txt_nueva_cuenta")
         if st.button("➕ Agregar Cuenta", key="btn_add_cuenta"):
-            if nueva_cuenta and nueva_cuenta not in lista_cuentas:
-                lista_cuentas.append(nueva_cuenta)
-                guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
+            if nueva_cuenta and nueva_cuenta not in st.session_state.lista_cuentas:
+                st.session_state.lista_cuentas.append(nueva_cuenta)
+                guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": st.session_state.lista_cuentas}))
                 st.success(f"Cuenta '{nueva_cuenta}' agregada con éxito.")
                 st.rerun()
 
         st.divider()
-        if lista_cuentas:
-            cuenta_eliminar = st.selectbox("Seleccionar cuenta a eliminar", lista_cuentas, key="sel_del_cuenta")
+        if st.session_state.lista_cuentas:
+            cuenta_eliminar = st.selectbox("Seleccionar cuenta a eliminar", st.session_state.lista_cuentas, key="sel_del_cuenta")
             if st.button("🗑️ Eliminar Cuenta", key="btn_del_cuenta"):
-                if cuenta_eliminar in lista_cuentas:
-                    lista_cuentas.remove(cuenta_eliminar)
-                    guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": lista_cuentas}))
+                if cuenta_eliminar in st.session_state.lista_cuentas:
+                    st.session_state.lista_cuentas.remove(cuenta_eliminar)
+                    guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": st.session_state.lista_cuentas}))
                     st.success(f"Cuenta '{cuenta_eliminar}' eliminada.")
                     st.rerun()
