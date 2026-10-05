@@ -27,7 +27,7 @@ def extraer_id_seguro(texto_opcion):
     except (ValueError, TypeError, IndexError):
         return None
 
-# Estandarizador de Movimientos
+# Estandarizador de Movimientos (Garantiza ID numérico)
 def estandarizar_df_movimientos(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["ID", "Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"])
@@ -48,7 +48,7 @@ def estandarizar_df_movimientos(df):
         if c not in df_clean.columns:
             df_clean[c] = ""
             
-    df_clean["ID"] = range(1, len(df_clean) + 1)
+    df_clean["ID"] = pd.to_numeric(range(1, len(df_clean) + 1), errors="coerce")
     return df_clean[req_cols].reset_index(drop=True)
 
 # Estandarizador de Estimaciones
@@ -84,7 +84,7 @@ def estandarizar_df_estimaciones(df):
         if required_col not in df_clean.columns:
             df_clean[required_col] = ""
             
-    df_clean["ID"] = range(1, len(df_clean) + 1)
+    df_clean["ID"] = pd.to_numeric(range(1, len(df_clean) + 1), errors="coerce")
     return df_clean[["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]].reset_index(drop=True)
 
 # Cargar datos e inicializar en st.session_state
@@ -407,7 +407,10 @@ elif opcion_menu == OPC_REGISTRAR:
             mov_seleccionado = st.selectbox("Selecciona un movimiento para editar o eliminar:", opciones_ids)
             
             id_sel = extraer_id_seguro(mov_seleccionado)
-            idx_registro = df_mov.index[df_mov["ID"] == id_sel].tolist() if id_sel is not None else []
+            
+            # Búsqueda numérica flexible (compara como entero o float)
+            ids_numericos = pd.to_numeric(df_mov["ID"], errors="coerce")
+            idx_registro = df_mov.index[ids_numericos == id_sel].tolist() if id_sel is not None else []
             
             if idx_registro:
                 idx = idx_registro[0]
@@ -686,7 +689,7 @@ elif opcion_menu == OPC_CONFIGURACION:
         st.divider()
         if st.session_state.lista_cuentas:
             cuenta_eliminar = st.selectbox("Seleccionar cuenta a eliminar", st.session_state.lista_cuentas, key="sel_del_cuenta")
-            if st.button("🗑️ Eliminar Cuenta", key="btn_del_cuenta"):
+            if st.button("🗑️️ Eliminar Cuenta", key="btn_del_cuenta"):
                 if cuenta_eliminar in st.session_state.lista_cuentas:
                     st.session_state.lista_cuentas.remove(cuenta_eliminar)
                     if guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": st.session_state.lista_cuentas})):
