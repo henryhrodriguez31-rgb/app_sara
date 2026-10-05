@@ -17,7 +17,7 @@ TASAS_HISTORICAS_OCT_2026 = {
     "2026-10-04": 871.37,
 }
 
-# Función para extraer ID de forma 100% segura
+# Extraer ID numérico seguro
 def extraer_id_seguro(texto_opcion):
     if not texto_opcion:
         return None
@@ -27,14 +27,13 @@ def extraer_id_seguro(texto_opcion):
     except (ValueError, TypeError, IndexError):
         return None
 
-# Estandarizador de Movimientos (Garantiza ID numérico)
+# Estandarizar Movimientos
 def estandarizar_df_movimientos(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["ID", "Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"])
     
     df_clean = df.dropna(how="all").copy()
     
-    # Filtrar filas vacías traídas desde Google Sheets
     if "Categoria" in df_clean.columns:
         df_clean = df_clean[df_clean["Categoria"].astype(str).str.strip().str.lower().isin(["nan", "none", ""]) == False]
     elif "Monto_VES" in df_clean.columns:
@@ -48,10 +47,10 @@ def estandarizar_df_movimientos(df):
         if c not in df_clean.columns:
             df_clean[c] = ""
             
-    df_clean["ID"] = pd.to_numeric(range(1, len(df_clean) + 1), errors="coerce")
+    df_clean["ID"] = range(1, len(df_clean) + 1)
     return df_clean[req_cols].reset_index(drop=True)
 
-# Estandarizador de Estimaciones
+# Estandarizar Estimaciones
 def estandarizar_df_estimaciones(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
@@ -84,10 +83,10 @@ def estandarizar_df_estimaciones(df):
         if required_col not in df_clean.columns:
             df_clean[required_col] = ""
             
-    df_clean["ID"] = pd.to_numeric(range(1, len(df_clean) + 1), errors="coerce")
+    df_clean["ID"] = range(1, len(df_clean) + 1)
     return df_clean[["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]].reset_index(drop=True)
 
-# Cargar datos e inicializar en st.session_state
+# Cargar datos e inicializar estado
 def inicializar_estado():
     if "df_movimientos" not in st.session_state:
         try:
@@ -147,7 +146,7 @@ def inicializar_estado():
 
 inicializar_estado()
 
-# Guardado seguro en Google Sheets
+# Guardar en Google Sheets
 def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
     try:
         df_padded = df_data.copy()
@@ -166,7 +165,7 @@ def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
         st.error(f"❌ Error al guardar en la pestaña '{worksheet_name}' de Google Sheets: {e}")
         return False
 
-# Suma segura de estimados
+# Suma estimada
 def calcular_total_estimado(df_est, tipo_buscado):
     if df_est is None or df_est.empty or "Tipo" not in df_est.columns or "Monto_Estimado_USD" not in df_est.columns:
         return 0.0
@@ -189,7 +188,7 @@ def calcular_total_estimado(df_est, tipo_buscado):
 
     return df_filtrado["Monto_Estimado_USD"].apply(limpiar_num).sum()
 
-# Obtener tasas del día desde API
+# Obtener tasas desde API
 @st.cache_data(ttl=300)
 def obtener_tasas():
     tasa_bcv = 871.37
@@ -224,7 +223,7 @@ def obtener_tasa_por_fecha(fecha_obj, modo_tasa):
     else:
         return tasa_bcv_hoy
 
-# BARRA LATERAL (MENU IZQUIERDO)
+# BARRA LATERAL
 st.sidebar.title("📌 App Sara Menu")
 
 tipo_tasa = st.sidebar.radio("Tasa activa de referencia:", ["BCV Oficial", "Paralelo", "Manual"])
@@ -404,47 +403,57 @@ elif opcion_menu == OPC_REGISTRAR:
         
         if not df_mov.empty:
             opciones_ids = df_mov["ID"].astype(str) + " - " + df_mov["Fecha"].astype(str) + " - " + df_mov["Categoria"].astype(str) + " (" + df_mov["Monto_VES"].astype(str) + " VES)"
-            mov_seleccionado = st.selectbox("Selecciona un movimiento para editar o eliminar:", opciones_ids)
+            mov_seleccionado = st.selectbox("Selecciona un movimiento para editar o eliminar:", opciones_ids, key="sel_mov_editar")
             
             id_sel = extraer_id_seguro(mov_seleccionado)
             
-            # Búsqueda numérica flexible (compara como entero o float)
+            # Buscar el registro por ID numérico
             ids_numericos = pd.to_numeric(df_mov["ID"], errors="coerce")
             idx_registro = df_mov.index[ids_numericos == id_sel].tolist() if id_sel is not None else []
             
             if idx_registro:
                 idx = idx_registro[0]
                 row = df_mov.loc[idx]
-                
+
+                # Sincronizador de estado: Si cambió la selección, forzar actualización de los inputs
+                if "ultimo_id_editado" not in st.session_state or st.session_state.ultimo_id_editado != id_sel:
+                    try:
+                        st.session_state["edit_fecha"] = datetime.strptime(str(row["Fecha"]), "%Y-%m-%d").date()
+                    except Exception:
+                        st.session_state["edit_fecha"] = date.today()
+                    
+                    st.session_state["edit_tipo"] = "Gasto" if str(row["Tipo"]) == "Gasto" else "Ingreso"
+                    st.session_state["edit_cat"] = str(row["Categoria"])
+                    st.session_state["edit_cta"] = row["Cuenta"] if row["Cuenta"] in st.session_state.lista_cuentas else st.session_state.lista_cuentas[0]
+                    st.session_state["edit_grp"] = row["Grupo"] if row["Grupo"] in st.session_state.lista_grupos else st.session_state.lista_grupos[0]
+                    
+                    try:
+                        st.session_state["edit_mves"] = float(row["Monto_VES"])
+                    except Exception:
+                        st.session_state["edit_mves"] = 0.0
+
+                    st.session_state["edit_det"] = str(row["Detalle"])
+                    st.session_state.ultimo_id_editado = id_sel
+
                 col_e1, col_e2 = st.columns(2)
                 with col_e1:
-                    try:
-                        fecha_val = datetime.strptime(str(row["Fecha"]), "%Y-%m-%d").date()
-                    except Exception:
-                        fecha_val = date.today()
-
-                    e_fecha = st.date_input("Modificar Fecha", value=fecha_val, key="edit_fecha")
-                    e_tipo = st.selectbox("Modificar Tipo", ["Gasto", "Ingreso"], index=0 if str(row["Tipo"]) == "Gasto" else 1, key="edit_tipo")
-                    e_categoria = st.text_input("Modificar Categoría", value=str(row["Categoria"]), key="edit_cat")
+                    e_fecha = st.date_input("Modificar Fecha", key="edit_fecha")
+                    e_tipo = st.selectbox("Modificar Tipo", ["Gasto", "Ingreso"], key="edit_tipo")
+                    e_categoria = st.text_input("Modificar Categoría", key="edit_cat")
                     
-                    idx_cta = st.session_state.lista_cuentas.index(row["Cuenta"]) if row["Cuenta"] in st.session_state.lista_cuentas else 0
-                    e_cuenta = st.selectbox("Modificar Cuenta", st.session_state.lista_cuentas, index=idx_cta, key="edit_cta")
+                    idx_cta = st.session_state.lista_cuentas.index(st.session_state["edit_cta"]) if st.session_state["edit_cta"] in st.session_state.lista_cuentas else 0
+                    e_cuenta = st.selectbox("Modificar Cuenta", st.session_state.lista_cuentas, key="edit_cta")
 
                 with col_e2:
-                    idx_grp = st.session_state.lista_grupos.index(row["Grupo"]) if row["Grupo"] in st.session_state.lista_grupos else 0
-                    e_grupo = st.selectbox("Modificar Grupo", st.session_state.lista_grupos, index=idx_grp, key="edit_grp")
+                    idx_grp = st.session_state.lista_grupos.index(st.session_state["edit_grp"]) if st.session_state["edit_grp"] in st.session_state.lista_grupos else 0
+                    e_grupo = st.selectbox("Modificar Grupo", st.session_state.lista_grupos, key="edit_grp")
                     
-                    try:
-                        m_ves_val = float(row["Monto_VES"])
-                    except Exception:
-                        m_ves_val = 0.0
-
-                    e_monto_ves = st.number_input("Modificar Monto (VES)", value=m_ves_val, step=10.0, key="edit_mves")
+                    e_monto_ves = st.number_input("Modificar Monto (VES)", step=10.0, key="edit_mves")
                     tasa_edit = obtener_tasa_por_fecha(e_fecha, tipo_tasa) if tipo_tasa != "Manual" else tasa_activa
                     e_monto_usd = e_monto_ves / tasa_edit if tasa_edit > 0 else 0.0
                     
                     st.info(f"Nuevo valor en USD recalculado ({tasa_edit:.2f} VES): **${e_monto_usd:,.2f} USD**")
-                    e_detalle = st.text_input("Modificar Detalle", value=str(row["Detalle"]), key="edit_det")
+                    e_detalle = st.text_input("Modificar Detalle", key="edit_det")
 
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
@@ -689,7 +698,7 @@ elif opcion_menu == OPC_CONFIGURACION:
         st.divider()
         if st.session_state.lista_cuentas:
             cuenta_eliminar = st.selectbox("Seleccionar cuenta a eliminar", st.session_state.lista_cuentas, key="sel_del_cuenta")
-            if st.button("🗑️️ Eliminar Cuenta", key="btn_del_cuenta"):
+            if st.button("🗑️ Eliminar Cuenta", key="btn_del_cuenta"):
                 if cuenta_eliminar in st.session_state.lista_cuentas:
                     st.session_state.lista_cuentas.remove(cuenta_eliminar)
                     if guardar_en_sheets("Cuentas", pd.DataFrame({"Nombre_Cuenta": st.session_state.lista_cuentas})):
