@@ -17,7 +17,41 @@ TASAS_HISTORICAS_OCT_2026 = {
     "2026-10-04": 871.37,
 }
 
-# Estandarizador de DataFrame de Estimaciones
+# Función para extraer ID de forma 100% segura
+def extraer_id_seguro(texto_opcion):
+    if not texto_opcion:
+        return None
+    try:
+        primera_parte = str(texto_opcion).split(" - ")[0].strip()
+        return int(float(primera_parte))
+    except (ValueError, TypeError, IndexError):
+        return None
+
+# Estandarizador de Movimientos
+def estandarizar_df_movimientos(df):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["ID", "Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"])
+    
+    df_clean = df.dropna(how="all").copy()
+    
+    # Filtrar filas vacías traídas desde Google Sheets
+    if "Categoria" in df_clean.columns:
+        df_clean = df_clean[df_clean["Categoria"].astype(str).str.strip().str.lower().isin(["nan", "none", ""]) == False]
+    elif "Monto_VES" in df_clean.columns:
+        df_clean = df_clean[df_clean["Monto_VES"].astype(str).str.strip().str.lower().isin(["nan", "none", ""]) == False]
+
+    if df_clean.empty:
+        return pd.DataFrame(columns=["ID", "Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"])
+
+    req_cols = ["ID", "Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"]
+    for c in req_cols:
+        if c not in df_clean.columns:
+            df_clean[c] = ""
+            
+    df_clean["ID"] = range(1, len(df_clean) + 1)
+    return df_clean[req_cols].reset_index(drop=True)
+
+# Estandarizador de Estimaciones
 def estandarizar_df_estimaciones(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
@@ -40,23 +74,25 @@ def estandarizar_df_estimaciones(df):
             
     df_clean = df_clean.rename(columns=column_mapping)
     
+    if "Categoria" in df_clean.columns:
+        df_clean = df_clean[df_clean["Categoria"].astype(str).str.strip().str.lower().isin(["nan", "none", ""]) == False]
+
+    if df_clean.empty:
+        return pd.DataFrame(columns=["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"])
+
     for required_col in ["Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]:
         if required_col not in df_clean.columns:
             df_clean[required_col] = ""
             
     df_clean["ID"] = range(1, len(df_clean) + 1)
-    
-    return df_clean[["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]]
+    return df_clean[["ID", "Tipo", "Categoria", "Grupo", "Monto_Estimado_USD"]].reset_index(drop=True)
 
 # Cargar datos e inicializar en st.session_state
 def inicializar_estado():
     if "df_movimientos" not in st.session_state:
         try:
             df_mov = conn.read(worksheet="Movimientos", ttl=0)
-            df_mov = df_mov.dropna(how="all")
-            if not df_mov.empty and "ID" not in df_mov.columns:
-                df_mov.insert(0, "ID", range(1, len(df_mov) + 1))
-            st.session_state.df_movimientos = df_mov
+            st.session_state.df_movimientos = estandarizar_df_movimientos(df_mov)
         except Exception:
             st.session_state.df_movimientos = pd.DataFrame(
                 columns=["ID", "Fecha", "Tipo", "Categoria", "Grupo", "Cuenta", "Monto_VES", "Tasa_Usada", "Monto_USD", "Detalle"]
@@ -93,7 +129,7 @@ def inicializar_estado():
         try:
             df_grup = conn.read(worksheet="Grupos", ttl=0)
             grupos = df_grup["Nombre_Grupo"].dropna().astype(str).str.strip().tolist()
-            st.session_state.lista_grupos = [g for g in grupos if g and g != "nan"]
+            st.session_state.lista_grupos = [g for g in grupos if g and g.lower() not in ["nan", "none"]]
             if not st.session_state.lista_grupos:
                 st.session_state.lista_grupos = ["Gastos fijos", "Fondo ahorro", "Entretenimiento", "Personal", "Hogar", "Trabajo"]
         except Exception:
@@ -103,20 +139,18 @@ def inicializar_estado():
         try:
             df_cta = conn.read(worksheet="Cuentas", ttl=0)
             cuentas = df_cta["Nombre_Cuenta"].dropna().astype(str).str.strip().tolist()
-            st.session_state.lista_cuentas = [c for c in cuentas if c and c != "nan"]
+            st.session_state.lista_cuentas = [c for c in cuentas if c and c.lower() not in ["nan", "none"]]
             if not st.session_state.lista_cuentas:
-                st.session_state.lista_cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)", "Cashea"]
+                st.session_state.lista_cuentas = ["Banesco (VES)", "BDV (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)", "Cashea"]
         except Exception:
-            st.session_state.lista_cuentas = ["Banesco (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)", "Cashea"]
+            st.session_state.lista_cuentas = ["Banesco (VES)", "BDV (VES)", "Mercantil (VES)", "Efectivo (USD)", "Binance (USDT)", "Quantfury (USDT)", "Cashea"]
 
 inicializar_estado()
 
-# Guardado seguro en Google Sheets con diagnóstico de errores
+# Guardado seguro en Google Sheets
 def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
     try:
         df_padded = df_data.copy()
-        
-        # Convertir a formato texto limpio para evitar errores de tipo en Google Sheets
         for col in df_padded.columns:
             df_padded[col] = df_padded[col].fillna("").astype(str)
 
@@ -130,10 +164,9 @@ def guardar_en_sheets(worksheet_name, df_data, min_rows=100):
         return True
     except Exception as e:
         st.error(f"❌ Error al guardar en la pestaña '{worksheet_name}' de Google Sheets: {e}")
-        st.info("💡 Verifica que tu hoja de Google Sheets esté compartida con rol de Editor con el correo de Service Account.")
         return False
 
-# Cálculo seguro para sumar Ingresos y Gastos Estimados
+# Suma segura de estimados
 def calcular_total_estimado(df_est, tipo_buscado):
     if df_est is None or df_est.empty or "Tipo" not in df_est.columns or "Monto_Estimado_USD" not in df_est.columns:
         return 0.0
@@ -342,9 +375,8 @@ elif opcion_menu == OPC_REGISTRAR:
             detalle = st.text_input("Detalle / Observación")
 
         if st.button("Guardar Movimiento", type="primary"):
-            next_id = 1
-            if not st.session_state.df_movimientos.empty and "ID" in st.session_state.df_movimientos.columns:
-                next_id = int(pd.to_numeric(st.session_state.df_movimientos["ID"], errors="coerce").max() or 0) + 1
+            st.session_state.df_movimientos = estandarizar_df_movimientos(st.session_state.df_movimientos)
+            next_id = len(st.session_state.df_movimientos) + 1
 
             nuevo = pd.DataFrame([{
                 "ID": next_id,
@@ -360,20 +392,22 @@ elif opcion_menu == OPC_REGISTRAR:
             }])
             
             st.session_state.df_movimientos = pd.concat([st.session_state.df_movimientos, nuevo], ignore_index=True)
+            st.session_state.df_movimientos = estandarizar_df_movimientos(st.session_state.df_movimientos)
             if guardar_en_sheets("Movimientos", st.session_state.df_movimientos):
                 st.success(f"¡Movimiento registrado con éxito! Guardado en USD: ${monto_usd:,.2f} USD.")
                 st.rerun()
 
     with tab2:
         st.subheader("Gestión y Modificación de Movimientos")
-        df_mov = st.session_state.df_movimientos
+        df_mov = estandarizar_df_movimientos(st.session_state.df_movimientos)
+        st.session_state.df_movimientos = df_mov
         
-        if not df_mov.empty and "ID" in df_mov.columns:
+        if not df_mov.empty:
             opciones_ids = df_mov["ID"].astype(str) + " - " + df_mov["Fecha"].astype(str) + " - " + df_mov["Categoria"].astype(str) + " (" + df_mov["Monto_VES"].astype(str) + " VES)"
             mov_seleccionado = st.selectbox("Selecciona un movimiento para editar o eliminar:", opciones_ids)
             
-            id_sel = int(mov_seleccionado.split(" - ")[0])
-            idx_registro = df_mov.index[df_mov["ID"] == id_sel].tolist()
+            id_sel = extraer_id_seguro(mov_seleccionado)
+            idx_registro = df_mov.index[df_mov["ID"] == id_sel].tolist() if id_sel is not None else []
             
             if idx_registro:
                 idx = idx_registro[0]
@@ -387,7 +421,7 @@ elif opcion_menu == OPC_REGISTRAR:
                         fecha_val = date.today()
 
                     e_fecha = st.date_input("Modificar Fecha", value=fecha_val, key="edit_fecha")
-                    e_tipo = st.selectbox("Modificar Tipo", ["Gasto", "Ingreso"], index=0 if row["Tipo"] == "Gasto" else 1, key="edit_tipo")
+                    e_tipo = st.selectbox("Modificar Tipo", ["Gasto", "Ingreso"], index=0 if str(row["Tipo"]) == "Gasto" else 1, key="edit_tipo")
                     e_categoria = st.text_input("Modificar Categoría", value=str(row["Categoria"]), key="edit_cat")
                     
                     idx_cta = st.session_state.lista_cuentas.index(row["Cuenta"]) if row["Cuenta"] in st.session_state.lista_cuentas else 0
@@ -397,7 +431,12 @@ elif opcion_menu == OPC_REGISTRAR:
                     idx_grp = st.session_state.lista_grupos.index(row["Grupo"]) if row["Grupo"] in st.session_state.lista_grupos else 0
                     e_grupo = st.selectbox("Modificar Grupo", st.session_state.lista_grupos, index=idx_grp, key="edit_grp")
                     
-                    e_monto_ves = st.number_input("Modificar Monto (VES)", value=float(row["Monto_VES"]), step=10.0, key="edit_mves")
+                    try:
+                        m_ves_val = float(row["Monto_VES"])
+                    except Exception:
+                        m_ves_val = 0.0
+
+                    e_monto_ves = st.number_input("Modificar Monto (VES)", value=m_ves_val, step=10.0, key="edit_mves")
                     tasa_edit = obtener_tasa_por_fecha(e_fecha, tipo_tasa) if tipo_tasa != "Manual" else tasa_activa
                     e_monto_usd = e_monto_ves / tasa_edit if tasa_edit > 0 else 0.0
                     
@@ -417,6 +456,7 @@ elif opcion_menu == OPC_REGISTRAR:
                         st.session_state.df_movimientos.at[idx, "Monto_USD"] = round(e_monto_usd, 2)
                         st.session_state.df_movimientos.at[idx, "Detalle"] = e_detalle
 
+                        st.session_state.df_movimientos = estandarizar_df_movimientos(st.session_state.df_movimientos)
                         if guardar_en_sheets("Movimientos", st.session_state.df_movimientos):
                             st.success("¡Registro actualizado exitosamente!")
                             st.rerun()
@@ -424,6 +464,7 @@ elif opcion_menu == OPC_REGISTRAR:
                 with col_btn2:
                     if st.button("🗑️ Eliminar Movimiento", type="secondary"):
                         st.session_state.df_movimientos = st.session_state.df_movimientos.drop(idx).reset_index(drop=True)
+                        st.session_state.df_movimientos = estandarizar_df_movimientos(st.session_state.df_movimientos)
                         if guardar_en_sheets("Movimientos", st.session_state.df_movimientos):
                             st.success("¡Registro eliminado correctamente!")
                             st.rerun()
@@ -554,8 +595,8 @@ elif opcion_menu == OPC_PRESUPUESTO:
             opciones_est = df_est["ID"].astype(str) + " - " + df_est["Tipo"].astype(str) + " - " + df_est["Categoria"].astype(str)
             est_sel = st.selectbox("Selecciona una estimación para borrar:", opciones_est)
             
-            if st.button("🗑️ Eliminar Estimación Seleccionada"):
-                id_est_del = int(est_sel.split(" - ")[0])
+            id_est_del = extraer_id_seguro(est_sel)
+            if st.button("🗑️ Eliminar Estimación Seleccionada") and id_est_del is not None:
                 st.session_state.df_estimaciones = df_est[df_est["ID"] != id_est_del].reset_index(drop=True)
                 st.session_state.df_estimaciones = estandarizar_df_estimaciones(st.session_state.df_estimaciones)
                 if guardar_en_sheets("Estimaciones", st.session_state.df_estimaciones):
