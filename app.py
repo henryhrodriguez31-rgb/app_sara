@@ -415,49 +415,39 @@ elif opcion_menu == OPC_REGISTRAR:
                 idx = idx_registro[0]
                 row = df_mov.loc[idx]
 
-                # Sincronizador de estado: Si cambió la selección, forzar actualización de los inputs
-                if "ultimo_id_editado" not in st.session_state or st.session_state.ultimo_id_editado != id_sel:
-                    try:
-                        st.session_state["edit_fecha"] = datetime.strptime(str(row["Fecha"]), "%Y-%m-%d").date()
-                    except Exception:
-                        st.session_state["edit_fecha"] = date.today()
-                    
-                    st.session_state["edit_tipo"] = "Gasto" if str(row["Tipo"]) == "Gasto" else "Ingreso"
-                    st.session_state["edit_cat"] = str(row["Categoria"])
-                    st.session_state["edit_cta"] = row["Cuenta"] if row["Cuenta"] in st.session_state.lista_cuentas else st.session_state.lista_cuentas[0]
-                    st.session_state["edit_grp"] = row["Grupo"] if row["Grupo"] in st.session_state.lista_grupos else st.session_state.lista_grupos[0]
-                    
-                    try:
-                        st.session_state["edit_mves"] = float(row["Monto_VES"])
-                    except Exception:
-                        st.session_state["edit_mves"] = 0.0
-
-                    st.session_state["edit_det"] = str(row["Detalle"])
-                    st.session_state.ultimo_id_editado = id_sel
+                try:
+                    fecha_val = datetime.strptime(str(row["Fecha"]), "%Y-%m-%d").date()
+                except Exception:
+                    fecha_val = date.today()
 
                 col_e1, col_e2 = st.columns(2)
                 with col_e1:
-                    e_fecha = st.date_input("Modificar Fecha", key="edit_fecha")
-                    e_tipo = st.selectbox("Modificar Tipo", ["Gasto", "Ingreso"], key="edit_tipo")
-                    e_categoria = st.text_input("Modificar Categoría", key="edit_cat")
+                    e_fecha = st.date_input("Modificar Fecha", value=fecha_val, key=f"edit_fecha_{id_sel}")
+                    e_tipo = st.selectbox("Modificar Tipo", ["Gasto", "Ingreso"], index=0 if str(row["Tipo"]) == "Gasto" else 1, key=f"edit_tipo_{id_sel}")
+                    e_categoria = st.text_input("Modificar Categoría", value=str(row["Categoria"]), key=f"edit_cat_{id_sel}")
                     
-                    idx_cta = st.session_state.lista_cuentas.index(st.session_state["edit_cta"]) if st.session_state["edit_cta"] in st.session_state.lista_cuentas else 0
-                    e_cuenta = st.selectbox("Modificar Cuenta", st.session_state.lista_cuentas, key="edit_cta")
+                    idx_cta = st.session_state.lista_cuentas.index(row["Cuenta"]) if row["Cuenta"] in st.session_state.lista_cuentas else 0
+                    e_cuenta = st.selectbox("Modificar Cuenta", st.session_state.lista_cuentas, index=idx_cta, key=f"edit_cta_{id_sel}")
 
                 with col_e2:
-                    idx_grp = st.session_state.lista_grupos.index(st.session_state["edit_grp"]) if st.session_state["edit_grp"] in st.session_state.lista_grupos else 0
-                    e_grupo = st.selectbox("Modificar Grupo", st.session_state.lista_grupos, key="edit_grp")
+                    idx_grp = st.session_state.lista_grupos.index(row["Grupo"]) if row["Grupo"] in st.session_state.lista_grupos else 0
+                    e_grupo = st.selectbox("Modificar Grupo", st.session_state.lista_grupos, index=idx_grp, key=f"edit_grp_{id_sel}")
                     
-                    e_monto_ves = st.number_input("Modificar Monto (VES)", step=10.0, key="edit_mves")
+                    try:
+                        m_ves_val = float(row["Monto_VES"])
+                    except Exception:
+                        m_ves_val = 0.0
+
+                    e_monto_ves = st.number_input("Modificar Monto (VES)", value=m_ves_val, step=10.0, key=f"edit_mves_{id_sel}")
                     tasa_edit = obtener_tasa_por_fecha(e_fecha, tipo_tasa) if tipo_tasa != "Manual" else tasa_activa
                     e_monto_usd = e_monto_ves / tasa_edit if tasa_edit > 0 else 0.0
                     
                     st.info(f"Nuevo valor en USD recalculado ({tasa_edit:.2f} VES): **${e_monto_usd:,.2f} USD**")
-                    e_detalle = st.text_input("Modificar Detalle", key="edit_det")
+                    e_detalle = st.text_input("Modificar Detalle", value=str(row["Detalle"]), key=f"edit_det_{id_sel}")
 
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
-                    if st.button("💾 Guardar Cambios", type="primary"):
+                    if st.button("💾 Guardar Cambios", type="primary", key=f"btn_save_{id_sel}"):
                         st.session_state.df_movimientos.at[idx, "Fecha"] = str(e_fecha)
                         st.session_state.df_movimientos.at[idx, "Tipo"] = e_tipo
                         st.session_state.df_movimientos.at[idx, "Categoria"] = e_categoria
@@ -474,7 +464,7 @@ elif opcion_menu == OPC_REGISTRAR:
                             st.rerun()
 
                 with col_btn2:
-                    if st.button("🗑️ Eliminar Movimiento", type="secondary"):
+                    if st.button("🗑️ Eliminar Movimiento", type="secondary", key=f"btn_del_{id_sel}"):
                         st.session_state.df_movimientos = st.session_state.df_movimientos.drop(idx).reset_index(drop=True)
                         st.session_state.df_movimientos = estandarizar_df_movimientos(st.session_state.df_movimientos)
                         if guardar_en_sheets("Movimientos", st.session_state.df_movimientos):
