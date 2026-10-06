@@ -15,6 +15,8 @@ TASAS_HISTORICAS_OCT_2026 = {
     "2026-10-02": 866.56,
     "2026-10-03": 871.37,
     "2026-10-04": 871.37,
+    "2026-10-05": 871.37,
+    "2026-10-06": 871.37,
 }
 
 # Extraer ID numérico seguro
@@ -188,12 +190,38 @@ def calcular_total_estimado(df_est, tipo_buscado):
 
     return df_filtrado["Monto_Estimado_USD"].apply(limpiar_num).sum()
 
-# Obtener tasas desde API
+# Obtener tasas del día con respaldo (Fallback Multifuente)
 @st.cache_data(ttl=300)
 def obtener_tasas():
     tasa_bcv = 871.37
     tasa_paralelo = 974.38
     
+    # Fuente 1: ve.dolarapi.com
+    try:
+        res = requests.get("https://ve.dolarapi.com/v1/dolares", timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            for item in data:
+                fuente = str(item.get("fuente", "")).lower()
+                if "oficial" in fuente or "bcv" in fuente:
+                    tasa_bcv = float(item.get("promedio", tasa_bcv))
+                elif "paralelo" in fuente:
+                    tasa_paralelo = float(item.get("promedio", tasa_paralelo))
+            return tasa_bcv, tasa_paralelo
+    except Exception:
+        pass
+
+    # Fuente 2: rates.dolarvzla.com (Respaldo BCV)
+    try:
+        res = requests.get("https://rates.dolarvzla.com/bcv/current.json", timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if "current" in data and "usd" in data["current"]:
+                tasa_bcv = float(data["current"]["usd"])
+    except Exception:
+        pass
+
+    # Fuente 3: pydolarvenezuela
     try:
         res = requests.get("https://pydolarvenezuela-api.vercel.app/api/v1/dollar", timeout=5)
         if res.status_code == 200:
@@ -464,7 +492,7 @@ elif opcion_menu == OPC_REGISTRAR:
                             st.rerun()
 
                 with col_btn2:
-                    if st.button("🗑️ Eliminar Movimiento", type="secondary", key=f"btn_del_{id_sel}"):
+                    if st.button("🗑️️ Eliminar Movimiento", type="secondary", key=f"btn_del_{id_sel}"):
                         st.session_state.df_movimientos = st.session_state.df_movimientos.drop(idx).reset_index(drop=True)
                         st.session_state.df_movimientos = estandarizar_df_movimientos(st.session_state.df_movimientos)
                         if guardar_en_sheets("Movimientos", st.session_state.df_movimientos):
