@@ -3,6 +3,7 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import requests
 from datetime import date, datetime
+import plotly.express as px
 
 st.set_page_config(page_title="App Sara", page_icon="📊", layout="wide")
 
@@ -671,15 +672,12 @@ elif opcion_menu == OPC_RESUMEN:
     if not df_mov.empty and "Monto_USD" in df_mov.columns:
         df_analisis = df_mov.copy()
         
-        # 🧹 LIMPIEZA Y ESTANDARIZACIÓN PARA AGRUPAR CONCEPTOS REPETIDOS
+        # Limpieza de datos
         df_analisis["Monto_USD"] = pd.to_numeric(df_analisis["Monto_USD"], errors="coerce").fillna(0.0)
         df_analisis["Tipo"] = df_analisis["Tipo"].astype(str).str.strip().str.capitalize()
-        
-        # Limpiar espacios en blanco al inicio/final y capitalizar (Primera letra mayúscula)
         df_analisis["Grupo"] = df_analisis["Grupo"].astype(str).str.strip().str.capitalize()
         df_analisis["Categoria"] = df_analisis["Categoria"].astype(str).str.strip().str.capitalize()
         
-        # Reemplazar valores nulos o vacíos
         df_analisis["Grupo"] = df_analisis["Grupo"].replace({"Nan": "Sin Grupo", "None": "Sin Grupo", "": "Sin Grupo"})
         df_analisis["Categoria"] = df_analisis["Categoria"].replace({"Nan": "Sin Categoría", "None": "Sin Categoría", "": "Sin Categoría"})
 
@@ -695,26 +693,33 @@ elif opcion_menu == OPC_RESUMEN:
         
         st.divider()
         
-        # 2. Controles de Filtrado
-        col_f1, col_f2, col_f3 = st.columns(3)
+        # 2. Controles de Filtrado e Interactividad
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         
         with col_f1:
             filtro_tipo = st.selectbox(
-                "Filtrar por Tipo de Movimiento:",
+                "Tipo de Movimiento:",
                 ["Todos (Ingresos vs Gastos)", "Solo Gastos", "Solo Ingresos"]
             )
             
         with col_f2:
             agrupar_por = st.radio(
-                "Agrupar gráfico por:",
+                "Agrupar por:",
                 ["Grupo", "Categoria"],
                 horizontal=True
             )
             
         with col_f3:
+            # Selección de Tipo de Gráfico interactivo
+            tipo_grafico = st.selectbox(
+                "Tipo de Gráfico:",
+                ["Torta / Dona (Interactivo)", "Barras Verticales", "Barras Horizontales"]
+            )
+            
+        with col_f4:
             grupos_unicos = sorted([g for g in df_analisis["Grupo"].unique() if g != "Sin Grupo"])
             lista_grupos_disp = ["Todos los Grupos"] + grupos_unicos
-            grupo_filtrado = st.selectbox("Filtrar por Grupo específico:", lista_grupos_disp)
+            grupo_filtrado = st.selectbox("Filtrar por Grupo:", lista_grupos_disp)
 
         # Aplicar Filtros
         df_filtrado = df_analisis.copy()
@@ -727,36 +732,45 @@ elif opcion_menu == OPC_RESUMEN:
         if grupo_filtrado != "Todos los Grupos":
             df_filtrado = df_filtrado[df_filtrado["Grupo"] == grupo_filtrado]
 
-        # 3. Renderizado del Gráfico con Consolidación Estricta
+        # 3. Renderizado con Plotly Express
         if not df_filtrado.empty:
             st.markdown(f"### 📈 Distribución por **{agrupar_por}** ({filtro_tipo})")
             
-            if filtro_tipo == "Todos (Ingresos vs Gastos)":
-                # Agrupar explícitamente antes de pivotar para consolidar duplicados
-                df_grouped = df_filtrado.groupby([agrupar_por, "Tipo"])["Monto_USD"].sum().reset_index()
-                
-                df_pivot = df_grouped.pivot(
-                    index=agrupar_por, 
-                    columns="Tipo", 
-                    values="Monto_USD"
-                ).fillna(0.0)
-                
-                st.bar_chart(df_pivot)
-                
-                with st.expander("📋 Ver detalle en tabla de datos"):
-                    st.dataframe(df_pivot.style.format("${:,.2f}"), use_container_width=True)
-            else:
-                # Agrupar sumando montos de conceptos idénticos
-                df_grp = df_filtrado.groupby(agrupar_por)["Monto_USD"].sum().reset_index()
-                df_grp = df_grp.sort_values(by="Monto_USD", ascending=False)
-                
-                st.bar_chart(df_grp.set_index(agrupar_por))
-                
-                with st.expander("📋 Ver detalle en tabla de datos"):
-                    st.dataframe(
-                        df_grp.rename(columns={"Monto_USD": "Monto Total ($ USD)"}).style.format({"Monto Total ($ USD)": "${:,.2f}"}),
-                        use_container_width=True
-                    )
+            # Agrupar montos consolidados
+            df_grp = df_filtrado.groupby([agrupar_por, "Tipo"])["Monto_USD"].sum().reset_index() if filtro_tipo == "Todos (Ingresos vs Gastos)" else df_filtrado.groupby(agrupar_por)["Monto_USD"].sum().reset_index()
+            
+            if tipo_grafico == "Torta / Dona (Interactivo)":
+                # Gráfico circular / dona
+                fig = px.pie(
+                    df_grp, 
+                    names=agrupar_por, 
+                    values="Monto_USD",
+                    color="Tipo" if filtro_tipo == "Todos (Ingresos vs Gastos)" else agrupar_por,
+                    hole=0.4, # Crea el efecto de Dona
+                    title=f"Porcentaje de {agrupar_por}"
+                )
+                fig.update_traces(textinfo="percent+label", hovertemplate="%{label}: $%{value:,.2f} USD (%{percent})")
+                st.plotly_chart(fig, use_container_width=True)
+
+            elif tipo_grafico == "Barras Verticales":
+                if filtro_tipo == "Todos (Ingresos vs Gastos)":
+                    fig = px.bar(df_grp, x=agrupar_por, y="Monto_USD", color="Tipo", barmode="group", text_auto=".2f")
+                else:
+                    fig = px.bar(df_grp, x=agrupar_por, y="Monto_USD", color=agrupar_por, text_auto=".2f")
+                fig.update_layout(yaxis_title="Monto ($ USD)", xaxis_title=agrupar_por)
+                st.plotly_chart(fig, use_container_width=True)
+
+            elif tipo_grafico == "Barras Horizontales":
+                if filtro_tipo == "Todos (Ingresos vs Gastos)":
+                    fig = px.bar(df_grp, y=agrupar_por, x="Monto_USD", color="Tipo", barmode="group", orientation="h", text_auto=".2f")
+                else:
+                    fig = px.bar(df_grp, y=agrupar_por, x="Monto_USD", color=agrupar_por, orientation="h", text_auto=".2f")
+                fig.update_layout(xaxis_title="Monto ($ USD)", yaxis_title=agrupar_por)
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Detalle en tabla
+            with st.expander("📋 Ver detalle en tabla de datos"):
+                st.dataframe(df_grp.style.format({"Monto_USD": "${:,.2f}"}), use_container_width=True)
         else:
             st.info("No hay registros que coincidan con los filtros seleccionados.")
             
