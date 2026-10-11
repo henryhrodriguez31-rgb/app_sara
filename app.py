@@ -664,18 +664,93 @@ elif opcion_menu == OPC_CARGAR:
 
 # 6. RESUMEN Y GRÁFICOS
 elif opcion_menu == OPC_RESUMEN:
-    st.subheader("Evolución y Distribución de Gastos (en USD)")
+    st.subheader("📊 Análisis y Evolución Financiera (en USD)")
+    
     df_mov = st.session_state.df_movimientos
-    if not df_mov.empty:
-        df_gastos = df_mov[df_mov["Tipo"].astype(str).str.strip().str.lower() == "gasto"].copy()
-        df_gastos["Monto_USD"] = pd.to_numeric(df_gastos["Monto_USD"], errors="coerce")
-        if not df_gastos.empty:
-            df_grp = df_gastos.groupby("Grupo")["Monto_USD"].sum().reset_index()
-            st.bar_chart(df_grp.set_index("Grupo"))
+    
+    if not df_mov.empty and "Monto_USD" in df_mov.columns:
+        # Asegurar conversión numérica limpia
+        df_analisis = df_mov.copy()
+        df_analisis["Monto_USD"] = pd.to_numeric(df_analisis["Monto_USD"], errors="coerce").fillna(0.0)
+        df_analisis["Tipo"] = df_analisis["Tipo"].astype(str).str.strip().str.capitalize()
+        
+        # 1. Métricas Generales
+        col_m1, col_m2, col_m3 = st.columns(3)
+        total_ing = df_analisis[df_analisis["Tipo"] == "Ingreso"]["Monto_USD"].sum()
+        total_gast = df_analisis[df_analisis["Tipo"] == "Gasto"]["Monto_USD"].sum()
+        balance_neto = total_ing - total_gast
+        
+        col_m1.metric("📥 Total Ingresos Reales", f"${total_ing:,.2f} USD")
+        col_m2.metric("📤 Total Gastos Reales", f"${total_gast:,.2f} USD")
+        col_m3.metric("⚖️ Balance Neto", f"${balance_neto:,.2f} USD", delta=f"${balance_neto:,.2f} USD")
+        
+        st.divider()
+        
+        # 2. Controles de Filtrado para Gráficos
+        col_f1, col_f2, col_f3 = st.columns(3)
+        
+        with col_f1:
+            filtro_tipo = st.selectbox(
+                "Filtrar por Tipo de Movimiento:",
+                ["Todos (Ingresos vs Gastos)", "Solo Gastos", "Solo Ingresos"]
+            )
+            
+        with col_f2:
+            agrupar_por = st.radio(
+                "Agrupar gráfico por:",
+                ["Grupo", "Categoria"],
+                horizontal=True
+            )
+            
+        with col_f3:
+            lista_grupos_disp = ["Todos los Grupos"] + sorted([g for g in df_analisis["Grupo"].unique() if str(g).strip()])
+            grupo_filtrado = st.selectbox("Filtrar por Grupo específico:", lista_grupos_disp)
+
+        # Aplicar Filtros
+        df_filtrado = df_analisis.copy()
+        
+        if filtro_tipo == "Solo Gastos":
+            df_filtrado = df_filtrado[df_filtrado["Tipo"] == "Gasto"]
+        elif filtro_tipo == "Solo Ingresos":
+            df_filtrado = df_filtrado[df_filtrado["Tipo"] == "Ingreso"]
+            
+        if grupo_filtrado != "Todos los Grupos":
+            df_filtrado = df_filtrado[df_filtrado["Grupo"] == grupo_filtrado]
+
+        # 3. Renderizado de Gráficos
+        if not df_filtrado.empty:
+            st.markdown(f"### 📈 Distribución por **{agrupar_por}** ({filtro_tipo})")
+            
+            if filtro_tipo == "Todos (Ingresos vs Gastos)":
+                # Tabla dinámica para comparar Ingresos y Gastos lado a lado
+                df_pivot = df_filtrado.pivot_table(
+                    index=agrupar_por, 
+                    columns="Tipo", 
+                    values="Monto_USD", 
+                    aggfunc="sum"
+                ).fillna(0.0)
+                
+                st.bar_chart(df_pivot)
+                
+                with st.expander("📋 Ver detalle en tabla de datos"):
+                    st.dataframe(df_pivot.style.format("${:,.2f}"), use_container_width=True)
+            else:
+                # Gráfico de barras simple para un solo tipo
+                df_grp = df_filtrado.groupby(agrupar_por)["Monto_USD"].sum().reset_index()
+                df_grp = df_grp.sort_values(by="Monto_USD", ascending=False)
+                
+                st.bar_chart(df_grp.set_index(agrupar_por))
+                
+                with st.expander("📋 Ver detalle en tabla de datos"):
+                    st.dataframe(
+                        df_grp.rename(columns={"Monto_USD": "Monto Total ($ USD)"}).style.format({"Monto Total ($ USD)": "${:,.2f}"}),
+                        use_container_width=True
+                    )
         else:
-            st.info("No hay gastos registrados para graficar.")
+            st.info("No hay registros que coincidan con los filtros seleccionados.")
+            
     else:
-        st.info("Aún no existen registros para mostrar métricas.")
+        st.info("Aún no existen movimientos registrados para mostrar estadísticas y gráficos.")
 
 # 7. GESTIÓN DE GRUPOS Y CUENTAS
 elif opcion_menu == OPC_CONFIGURACION:
