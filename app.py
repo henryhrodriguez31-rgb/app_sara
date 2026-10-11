@@ -669,11 +669,20 @@ elif opcion_menu == OPC_RESUMEN:
     df_mov = st.session_state.df_movimientos
     
     if not df_mov.empty and "Monto_USD" in df_mov.columns:
-        # Asegurar conversión numérica limpia
         df_analisis = df_mov.copy()
+        
+        # 🧹 LIMPIEZA Y ESTANDARIZACIÓN PARA AGRUPAR CONCEPTOS REPETIDOS
         df_analisis["Monto_USD"] = pd.to_numeric(df_analisis["Monto_USD"], errors="coerce").fillna(0.0)
         df_analisis["Tipo"] = df_analisis["Tipo"].astype(str).str.strip().str.capitalize()
         
+        # Limpiar espacios en blanco al inicio/final y capitalizar (Primera letra mayúscula)
+        df_analisis["Grupo"] = df_analisis["Grupo"].astype(str).str.strip().str.capitalize()
+        df_analisis["Categoria"] = df_analisis["Categoria"].astype(str).str.strip().str.capitalize()
+        
+        # Reemplazar valores nulos o vacíos
+        df_analisis["Grupo"] = df_analisis["Grupo"].replace({"Nan": "Sin Grupo", "None": "Sin Grupo", "": "Sin Grupo"})
+        df_analisis["Categoria"] = df_analisis["Categoria"].replace({"Nan": "Sin Categoría", "None": "Sin Categoría", "": "Sin Categoría"})
+
         # 1. Métricas Generales
         col_m1, col_m2, col_m3 = st.columns(3)
         total_ing = df_analisis[df_analisis["Tipo"] == "Ingreso"]["Monto_USD"].sum()
@@ -686,7 +695,7 @@ elif opcion_menu == OPC_RESUMEN:
         
         st.divider()
         
-        # 2. Controles de Filtrado para Gráficos
+        # 2. Controles de Filtrado
         col_f1, col_f2, col_f3 = st.columns(3)
         
         with col_f1:
@@ -703,7 +712,8 @@ elif opcion_menu == OPC_RESUMEN:
             )
             
         with col_f3:
-            lista_grupos_disp = ["Todos los Grupos"] + sorted([g for g in df_analisis["Grupo"].unique() if str(g).strip()])
+            grupos_unicos = sorted([g for g in df_analisis["Grupo"].unique() if g != "Sin Grupo"])
+            lista_grupos_disp = ["Todos los Grupos"] + grupos_unicos
             grupo_filtrado = st.selectbox("Filtrar por Grupo específico:", lista_grupos_disp)
 
         # Aplicar Filtros
@@ -717,17 +727,18 @@ elif opcion_menu == OPC_RESUMEN:
         if grupo_filtrado != "Todos los Grupos":
             df_filtrado = df_filtrado[df_filtrado["Grupo"] == grupo_filtrado]
 
-        # 3. Renderizado de Gráficos
+        # 3. Renderizado del Gráfico con Consolidación Estricta
         if not df_filtrado.empty:
             st.markdown(f"### 📈 Distribución por **{agrupar_por}** ({filtro_tipo})")
             
             if filtro_tipo == "Todos (Ingresos vs Gastos)":
-                # Tabla dinámica para comparar Ingresos y Gastos lado a lado
-                df_pivot = df_filtrado.pivot_table(
+                # Agrupar explícitamente antes de pivotar para consolidar duplicados
+                df_grouped = df_filtrado.groupby([agrupar_por, "Tipo"])["Monto_USD"].sum().reset_index()
+                
+                df_pivot = df_grouped.pivot(
                     index=agrupar_por, 
                     columns="Tipo", 
-                    values="Monto_USD", 
-                    aggfunc="sum"
+                    values="Monto_USD"
                 ).fillna(0.0)
                 
                 st.bar_chart(df_pivot)
@@ -735,7 +746,7 @@ elif opcion_menu == OPC_RESUMEN:
                 with st.expander("📋 Ver detalle en tabla de datos"):
                     st.dataframe(df_pivot.style.format("${:,.2f}"), use_container_width=True)
             else:
-                # Gráfico de barras simple para un solo tipo
+                # Agrupar sumando montos de conceptos idénticos
                 df_grp = df_filtrado.groupby(agrupar_por)["Monto_USD"].sum().reset_index()
                 df_grp = df_grp.sort_values(by="Monto_USD", ascending=False)
                 
