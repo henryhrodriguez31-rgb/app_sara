@@ -3,7 +3,6 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import requests
 from datetime import date, datetime
-import plotly.express as px
 
 st.set_page_config(page_title="App Sara", page_icon="📊", layout="wide")
 
@@ -663,167 +662,20 @@ elif opcion_menu == OPC_CARGAR:
         except Exception as e:
             st.error(f"Error al leer el archivo: {e}")
 
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-
-# Configuración inicial de la página
-st.set_page_config(
-    page_title="App Sara - Control Financiero",
-    page_icon="💰",
-    layout="wide"
-)
-
-# Nombres de las opciones del menú
-OPC_MOVIMIENTOS = "📝 Movimientos"
-OPC_ESTIMACIONES = "🎯 Estimaciones"
-OPC_RESUMEN = "📊 Resumen y Gráficos"
-
-# Inicializar DataFrames en session_state si no existen
-if "df_movimientos" not in st.session_state:
-    st.session_state.df_movimientos = pd.DataFrame(
-        columns=["Fecha", "Tipo", "Grupo", "Categoria", "Monto_USD", "Descripcion"]
-    )
-
-st.title("💰 App Sara - Gestión Financiera")
-
-# Menú lateral
-opcion_menu = st.sidebar.selectbox(
-    "Selecciona una opción:",
-    [OPC_MOVIMIENTOS, OPC_ESTIMACIONES, OPC_RESUMEN]
-)
-
-# ---------------------------------------------------------
-# 1. MOVIMIENTOS
-# ---------------------------------------------------------
-if opcion_menu == OPC_MOVIMIENTOS:
-    st.subheader("📝 Registro de Movimientos")
-    st.info("Aquí puedes ver y registrar tus ingresos y gastos.")
-    st.dataframe(st.session_state.df_movimientos, use_container_width=True)
-
-# ---------------------------------------------------------
-# 2. ESTIMACIONES
-# ---------------------------------------------------------
-elif opcion_menu == OPC_ESTIMACIONES:
-    st.subheader("🎯 Control de Estimaciones")
-    st.info("Sección reservada para metas y presupuestos estimativos.")
-
-# ---------------------------------------------------------
-# 3. RESUMEN Y GRÁFICOS INTERACTIVOS (PLOTLY)
-# ---------------------------------------------------------
+# 6. RESUMEN Y GRÁFICOS
 elif opcion_menu == OPC_RESUMEN:
-    st.subheader("📊 Análisis y Evolución Financiera (en USD)")
-    
+    st.subheader("Evolución y Distribución de Gastos (en USD)")
     df_mov = st.session_state.df_movimientos
-    
-    if not df_mov.empty and "Monto_USD" in df_mov.columns:
-        df_analisis = df_mov.copy()
-        
-        # 🧹 Limpieza y estandarización de datos para consolidar conceptos repetidos
-        df_analisis["Monto_USD"] = pd.to_numeric(df_analisis["Monto_USD"], errors="coerce").fillna(0.0)
-        df_analisis["Tipo"] = df_analisis["Tipo"].astype(str).str.strip().str.capitalize()
-        df_analisis["Grupo"] = df_analisis["Grupo"].astype(str).str.strip().str.capitalize()
-        df_analisis["Categoria"] = df_analisis["Categoria"].astype(str).str.strip().str.capitalize()
-        
-        df_analisis["Grupo"] = df_analisis["Grupo"].replace({"Nan": "Sin Grupo", "None": "Sin Grupo", "": "Sin Grupo"})
-        df_analisis["Categoria"] = df_analisis["Categoria"].replace({"Nan": "Sin Categoría", "None": "Sin Categoría", "": "Sin Categoría"})
-
-        # 1. Tarjetas de Métricas Generales
-        col_m1, col_m2, col_m3 = st.columns(3)
-        total_ing = df_analisis[df_analisis["Tipo"] == "Ingreso"]["Monto_USD"].sum()
-        total_gast = df_analisis[df_analisis["Tipo"] == "Gasto"]["Monto_USD"].sum()
-        balance_neto = total_ing - total_gast
-        
-        col_m1.metric("📥 Total Ingresos Reales", f"${total_ing:,.2f} USD")
-        col_m2.metric("📤 Total Gastos Reales", f"${total_gast:,.2f} USD")
-        col_m3.metric("⚖️ Balance Neto", f"${balance_neto:,.2f} USD", delta=f"${balance_neto:,.2f} USD")
-        
-        st.divider()
-        
-        # 2. Filtros y Selección de Tipo de Gráfico
-        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-        
-        with col_f1:
-            filtro_tipo = st.selectbox(
-                "Tipo de Movimiento:",
-                ["Todos (Ingresos vs Gastos)", "Solo Gastos", "Solo Ingresos"]
-            )
-            
-        with col_f2:
-            agrupar_por = st.radio(
-                "Agrupar por:",
-                ["Grupo", "Categoria"],
-                horizontal=True
-            )
-            
-        with col_f3:
-            tipo_grafico = st.selectbox(
-                "Tipo de Gráfico:",
-                ["Torta / Dona (Interactivo)", "Barras Verticales", "Barras Horizontales"]
-            )
-            
-        with col_f4:
-            grupos_unicos = sorted([g for g in df_analisis["Grupo"].unique() if g != "Sin Grupo"])
-            lista_grupos_disp = ["Todos los Grupos"] + grupos_unicos
-            grupo_filtrado = st.selectbox("Filtrar por Grupo:", lista_grupos_disp)
-
-        # Aplicar Filtros
-        df_filtrado = df_analisis.copy()
-        
-        if filtro_tipo == "Solo Gastos":
-            df_filtrado = df_filtrado[df_filtrado["Tipo"] == "Gasto"]
-        elif filtro_tipo == "Solo Ingresos":
-            df_filtrado = df_filtrado[df_filtrado["Tipo"] == "Ingreso"]
-            
-        if grupo_filtrado != "Todos los Grupos":
-            df_filtrado = df_filtrado[df_filtrado["Grupo"] == grupo_filtrado]
-
-        # 3. Renderizado de Gráficos Interactivos con Plotly Express
-        if not df_filtrado.empty:
-            st.markdown(f"### 📈 Distribución por **{agrupar_por}** ({filtro_tipo})")
-            
-            # Consolidar datos mediante groupby
-            if filtro_tipo == "Todos (Ingresos vs Gastos)":
-                df_grp = df_filtrado.groupby([agrupar_por, "Tipo"])["Monto_USD"].sum().reset_index()
-            else:
-                df_grp = df_filtrado.groupby(agrupar_por)["Monto_USD"].sum().reset_index()
-            
-            if tipo_grafico == "Torta / Dona (Interactivo)":
-                fig = px.pie(
-                    df_grp, 
-                    names=agrupar_por, 
-                    values="Monto_USD",
-                    color="Tipo" if filtro_tipo == "Todos (Ingresos vs Gastos)" else agrupar_por,
-                    hole=0.4,
-                    title=f"Porcentaje de {agrupar_por}"
-                )
-                fig.update_traces(textinfo="percent+label", hovertemplate="%{label}: $%{value:,.2f} USD (%{percent})")
-                st.plotly_chart(fig, use_container_width=True)
-
-            elif tipo_grafico == "Barras Verticales":
-                if filtro_tipo == "Todos (Ingresos vs Gastos)":
-                    fig = px.bar(df_grp, x=agrupar_por, y="Monto_USD", color="Tipo", barmode="group", text_auto=".2f")
-                else:
-                    fig = px.bar(df_grp, x=agrupar_por, y="Monto_USD", color=agrupar_por, text_auto=".2f")
-                fig.update_layout(yaxis_title="Monto ($ USD)", xaxis_title=agrupar_por)
-                st.plotly_chart(fig, use_container_width=True)
-
-            elif tipo_grafico == "Barras Horizontales":
-                if filtro_tipo == "Todos (Ingresos vs Gastos)":
-                    fig = px.bar(df_grp, y=agrupar_por, x="Monto_USD", color="Tipo", barmode="group", orientation="h", text_auto=".2f")
-                else:
-                    fig = px.bar(df_grp, y=agrupar_por, x="Monto_USD", color=agrupar_por, orientation="h", text_auto=".2f")
-                fig.update_layout(xaxis_title="Monto ($ USD)", yaxis_title=agrupar_por)
-                st.plotly_chart(fig, use_container_width=True)
-
-            # Tabla expandible con detalle
-            with st.expander("📋 Ver detalle en tabla de datos"):
-                st.dataframe(df_grp.style.format({"Monto_USD": "${:,.2f}"}), use_container_width=True)
+    if not df_mov.empty:
+        df_gastos = df_mov[df_mov["Tipo"].astype(str).str.strip().str.lower() == "gasto"].copy()
+        df_gastos["Monto_USD"] = pd.to_numeric(df_gastos["Monto_USD"], errors="coerce")
+        if not df_gastos.empty:
+            df_grp = df_gastos.groupby("Grupo")["Monto_USD"].sum().reset_index()
+            st.bar_chart(df_grp.set_index("Grupo"))
         else:
-            st.info("No hay registros que coincidan con los filtros seleccionados.")
-            
+            st.info("No hay gastos registrados para graficar.")
     else:
-        st.info("Aún no existen movimientos registrados para mostrar estadísticas y gráficos.")
+        st.info("Aún no existen registros para mostrar métricas.")
 
 # 7. GESTIÓN DE GRUPOS Y CUENTAS
 elif opcion_menu == OPC_CONFIGURACION:
